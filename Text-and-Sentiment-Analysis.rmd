@@ -1,0 +1,1714 @@
+---
+title: "Text & Sentiment Analysis"
+author: "Rodney Frazier"
+date: "11/15/2022"
+output: html_document
+---
+
+# Background
+
+Text and sentiment analysis are techniques used to extract meaningful information from written or spoken language. Text analysis involves various techniques to process and understand textual data, while sentiment analysis specifically focuses on determining the emotional tone or attitude expressed in the text. Both are valuable tools for extracting insights and making informed decisions in various fields.
+
+Text analysis, also known as text mining or natural language processing (NLP), involves the examination of textual data to derive insights, patterns, and relevant information.
+
+### Text Analysis Techniques:
+
+- **Tokenization**: Breaking down text into individual words or phrases (tokens).
+- **Named Entity Recognition (NER)**: Identifying and categorizing entities such as names, locations, and organizations in the text.
+- **Part-of-Speech Tagging (POS)**: Assigning grammatical categories (e.g., noun, verb) to words in a sentence.
+
+Sentiment analysis is a specific type of text analysis that focuses on determining the sentiment or emotion expressed in a piece of text. The purpose of this technique is for understanding the opinions, attitudes, and emotions of individuals or groups towards a particular subject, product, service, or event.
+
+### Text Analysis Techniques:
+
+- **Lexicon-based Approaches**: Using predefined dictionaries of words and their associated sentiments to analyze text.
+- **Machine Learning Models**: Training models to classify text into positive, negative, or neutral sentiments.
+
+### Applications of Text & Sentiment Analysis:
+
+- **Business Intelligence**: Extracting insights from customer reviews, feedback, and social media to make informed business decisions.
+- **Customer Feedback Analysis**: Understanding customer satisfaction and identifying areas for improvement.
+- **Social Media Monitoring**: Analyzing sentiments expressed on social media platforms for brand reputation management.
+- **Market Research**: Gaining insights into public opinions about products, services, or trends.
+
+### Challenges:
+
+- **Ambiguity**: Words or phrases with multiple meanings can make sentiment analysis challenging.
+- **Context Understanding**: Capturing the context in which words are used is crucial for accurate sentiment interpretation.
+- **Cultural and Linguistic Variations**: Sentiments may vary across different cultures and languages.
+
+```{r echo = F, purl=FALSE}
+
+options(warn=-1)
+
+# Set Directory
+directory <- paste0(as.character(fs::dir_ls(path="~/Dropbox/", 
+type="directory", glob="*AppStoreReviews", recurse=TRUE)),"/")
+# message(paste0("Directory found: ", directory))
+
+if("knitr" %in% rownames(installed.packages()) == FALSE) {
+install.packages("knitr", dependencies = TRUE)}
+library(knitr)
+
+if("kableExtra" %in% rownames(installed.packages()) == FALSE) {
+install.packages("kableExtra", dependencies = TRUE)}
+library(kableExtra)
+
+# Custom function to get structure as df
+get_structure_table <- function(df) {
+# df <- sentimentTS  
+df_str <- data.frame(
+Names=names(df), 
+Type=sapply(names(df), class))
+rownames(df_str) <- seq.int(nrow(df_str))
+df_str$Rows <- NA
+df_rows <- df %>% head(4)
+df_rows <- df_rows %>% 
+dplyr::mutate(across(everything(), as.character))
+for(n in 1:nrow(df_str)) { # n <- 1  
+columnSearch <- df_str[n, "Names"]  
+columnValues <- as.character(df_rows[, paste0(columnSearch)])
+columnValues <- substr(columnValues, 1, 21)
+df_str[n, "Rows"] <- paste(as.character(columnValues), collapse=", ")
+} # End loop
+return(df_str)
+} # End function
+# knitr::kable(get_structure_table(sentimentTS))
+```
+
+### Load packages
+<details>
+<summary>Show Packages Code</summary>
+```{r echo = TRUE, eval = TRUE, "Load Packages"}
+if("tools" %in% rownames(installed.packages()) == FALSE) {
+install.packages("tools", dependencies = TRUE)}
+suppressPackageStartupMessages(library(tools))
+
+if("plyr" %in% rownames(installed.packages()) == FALSE) {
+install.packages("plyr", dependencies = TRUE)}
+suppressPackageStartupMessages(library(plyr))
+
+if("tidyverse" %in% rownames(installed.packages()) == FALSE) {
+install.packages("tidyverse", dependencies = TRUE)}
+suppressPackageStartupMessages(library(tidyverse))
+
+if("syuzhet" %in% rownames(installed.packages()) == FALSE) {
+install.packages("syuzhet", dependencies = TRUE)}
+suppressPackageStartupMessages(library(syuzhet))
+
+if("lubridate" %in% rownames(installed.packages()) == FALSE) {
+install.packages("lubridate", dependencies = TRUE)}
+suppressPackageStartupMessages(library(lubridate))
+
+if("RColorBrewer" %in% rownames(installed.packages()) == FALSE) {
+install.packages("RColorBrewer", dependencies = TRUE)}
+suppressPackageStartupMessages(library(RColorBrewer))
+
+# Install package from Github
+# https://github.com/kassambara/ggpubr
+if(nzchar(system.file(package="ggpubr"))==FALSE) {
+remotes::install_github('kassambara/ggpubr')} 
+suppressPackageStartupMessages(library(ggpubr))
+```
+</details>
+
+### Set Chart Theme
+```{r echo = TRUE, eval = TRUE, "Chart Theme"}
+theme_set(
+  theme_minimal(base_size = 15) +
+    theme(
+      legend.position = "none",
+      plot.background = element_rect(colour = "#F6F8FA", fill = "#F6F8FA"),
+      panel.background = element_rect(fill = "#F6F8FA", colour = "#F6F8FA"),
+      panel.grid.major = element_line(colour = "#cccccc", linewidth = rel(0.3)),
+      panel.grid.minor = element_line(colour = "#cccccc", linewidth = rel(0.15)),
+      axis.text = element_text(colour = "#222222"),
+      plot.title = element_text(size = rel(1.7), face = "bold"),
+      plot.subtitle = element_text(size = rel(1.3)),
+      plot.caption = element_text(colour = "#444444")
+      )
+)
+```
+
+### Reset lists for app searches
+
+This will help with automatic formatting of charts later 
+
+```{r echo = TRUE, eval = TRUE, "App IDs"}
+# App Store ID 1
+appStoreID_1 <- list(id="6463805689", name="ESPN Betting")
+# class(appStoreID_1) # list
+
+# App Store ID 2
+appStoreID_2 <- list(id="1375031369", name="Draft Kings")
+```
+
+### Load Dataset
+
+Read in the App Store reviews file or files collected through the {iTunesR} package.
+
+<details>
+<summary>Show Load Dataset Code</summary>
+```{r echo = TRUE, eval = FALSE, "Load Data"}
+# 1. Choose file from your computer
+textDataAll <- read.csv(file.choose(), row.names=NULL)
+
+# 2. Choose file by text name input
+textDataAll <- read.csv("~/Downloads/Sports_Betting_Reviews_Combined.csv", row.names=NULL)
+
+```
+</details>
+
+```{r echo = FALSE, eval = TRUE, "Load Data 2"}
+fileName <- "~/Desktop/Sports_Betting_Reviews_Combined.csv"
+textDataAll <- read.csv(paste0(fileName), row.names=NULL)
+```
+
+### Examine structure of imported file data
+```{r echo = TRUE, eval = FALSE, "CSV Structure"}
+str(textDataAll) 
+```
+```{r echo = FALSE, eval = TRUE, purl=FALSE, "CSV Kable"}
+knitr::kable(get_structure_table(textDataAll)) %>%
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+### Format date column
+
+Formatting the date column each time we bring in a new CSV file is extremely important. Make sure you are formatting in the same time zone that you saved the reviews file in it. If you used a different time zone then 'America/Detroit' or 'America/New_York' then make sure you change the time zone in the code below.
+
+```{r echo = TRUE, eval = TRUE, "Format Date"}
+# Format date
+textDataAll$date <- as.Date(textDataAll$date)
+# is.Date(textDataAll$date)
+
+# Format datetime
+textDataAll$datetime <- strptime(textDataAll$datetime, format="%Y-%m-%d %H:%M:%S")
+# textDataAll$datetime  <- as.POSIXct(textDataAll$datetime, tz="America/New_York")
+textDataAll$datetime  <- as.POSIXct(textDataAll$datetime, tz="America/Detroit")
+# is.POSIXct(textDataAll$datetime)
+```
+
+### Get current time zone
+```{r echo = TRUE, eval = TRUE, "Get Timezone"}
+# Get timezone of the data
+attr(textDataAll$datetime, "tzone")
+```
+
+### Date and time formatting
+
+```{r echo = FALSE, eval = TRUE, "Time Formats Data"}
+timeFormats <- list()
+timeFormats <- append(timeFormats, list(c("Year (4 Digits)", "%Y")))
+timeFormats <- append(timeFormats, list(c("Year (2 Digits)", "%y")))
+timeFormats <- append(timeFormats, list(c("Month (Full)", "%B")))
+timeFormats <- append(timeFormats, list(c("Month (Abbreviated)", "%b OR %h")))
+timeFormats <- append(timeFormats, list(c("Month (Decimal)", "%m")))
+timeFormats <- append(timeFormats, list(c("Week of Year (Start=Sunday)", "%U")))
+timeFormats <- append(timeFormats, list(c("Week of Year (Start=Monday)", "%W")))
+timeFormats <- append(timeFormats, list(c("Day of Year (Decimal)", "%j")))
+timeFormats <- append(timeFormats, list(c("Day of Month (Decimal)", "%d")))
+timeFormats <- append(timeFormats, list(c("Weekday (Full)", "%A")))
+timeFormats <- append(timeFormats, list(c("Weekday (Abbreviated)", "%a")))
+timeFormats <- append(timeFormats, list(c("Weekday (0=Sunday)", "%w")))
+timeFormats <- append(timeFormats, list(c("Hours (24 Hrs)", "%H")))
+timeFormats <- append(timeFormats, list(c("Hours (12 Hrs)", "%I")))
+timeFormats <- append(timeFormats, list(c("Minutes", "%M")))
+timeFormats <- append(timeFormats, list(c("Second", "%S")))
+timeFormats <- append(timeFormats, list(c("Locale-Specific Date & Time", "%c")))
+timeFormats <- append(timeFormats, list(c("Locale-Specific Date", "%x")))
+timeFormats <- append(timeFormats, list(c("Locale-Specific Time", "%X")))
+timeFormats <- append(timeFormats, list(c("Locale-Specific AM/PM", "%p")))
+timeFormats <- append(timeFormats, list(c("Offset from GMT", "%z")))
+timeFormats <- append(timeFormats, list(c("Time Zone", "%Z")))
+timeFormats <- do.call(rbind.data.frame, timeFormats)
+colnames(timeFormats) <- c("Description", "Code")
+```
+```{r echo = FALSE, eval = TRUE, purl=FALSE}
+knitr::kable(timeFormats) %>% 
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+### Formatting dates and times
+
+<details>
+<summary>Show Date/Time Formats Code</summary>
+```{r echo = TRUE, eval = FALSE, "Test Time"}
+# Years Example (%Y-%y)
+format(Sys.time(), "%Y-%y")
+# "2023-23"
+
+# Months Example (%B-%b-%h-%m)
+format(Sys.time(), "%B-%b-%h-%m")
+# "November-Nov-Nov-11"
+
+# Weeks Example (%U-%W)
+format(Sys.time(), "%U-%W")
+# "47-46"
+
+# Days Example (%j-%d)
+format(Sys.time(), "%j-%d")
+# "323-19"
+
+# Weekdays Example (%A-%a-%w)
+format(Sys.time(), "%A-%a-%w")
+# "Sunday-Sun-0"
+
+# Time Example (%H-%I-%M-%S)
+format(Sys.time(), "%H-%I-%M-%S")
+# "10-10-38-19"
+
+# Get Current Date/Time
+format(Sys.Date(), format="%Y-%m-%d")
+#  "2023-11-19"
+format(Sys.Date(), format="%d/%m/%Y")
+#  "2023-11-19"
+
+# Convert from one format to another
+# Formats %d/%m/%Y to %Y-%m-%d
+format(format((Sys.Date()), format="%Y-%m-%d"), format="%d/%m/%Y")
+
+# Get system time zone
+Sys.timezone()
+
+# Set Time Zone
+# America/Detroit is the same time zone as 'America/New York'
+Sys.setenv(TZ = "America/New_York")
+Sys.setenv(TZ = "America/Detroit")
+Sys.timezone()
+```
+</details>
+
+## Text Cleaning
+
+Text cleaning, also known as text preprocessing or text normalization, is the process of transforming raw text data into a format that is suitable for analysis or natural language processing (NLP) tasks. 
+
+The goal of text cleaning is to remove noise, irrelevant information, and inconsistencies from the text, making it more structured and amenable to further processing. Text cleaning is a crucial step in the data preprocessing pipeline for various NLP applications.
+
+Text cleaning is a critical step in preparing text data for tasks such as sentiment analysis, topic modeling, and machine learning applications. The specific techniques applied depend on the nature of the data and the goals of the analysis. Efficient text cleaning can lead to more accurate and meaningful results in subsequent NLP tasks. 
+
+For example R does not recognize the lowercase and uppercase versions of words as the same word. It is important to convert all words to lower case in order to get the most accurate results from the analysis.
+
+```{r echo = TRUE, eval = FALSE, "Clean Text Ex"}
+# Why we clean text:
+"Rate"=="rate"
+# [1] FALSE
+tolower("Rate")
+# [1] "rate"
+tolower("Rate")=="rate"
+# [1] TRUE
+```
+
+Here are common techniques and tasks involved in text cleaning:
+
+<details>
+<summary>Show Text Cleaning Code</summary>
+```{r echo = TRUE, eval = TRUE, "Clean Text"}
+if("tidytext" %in% rownames(installed.packages()) == FALSE) {
+install.packages("tidytext", dependencies = TRUE)}
+suppressPackageStartupMessages(library(tidytext))
+
+if("tm" %in% rownames(installed.packages()) == FALSE) {
+install.packages("tm", dependencies = TRUE)}
+suppressPackageStartupMessages(library(tm))
+
+if("SnowballC" %in% rownames(installed.packages()) == FALSE) {
+install.packages("SnowballC", dependencies = TRUE)}
+suppressPackageStartupMessages(library(SnowballC))
+
+# Get distinct rows
+textDataDistinct <- textDataAll %>%
+  dplyr::distinct(title, date, rating, .keep_all=TRUE) 
+
+# Add row id
+textDataDistinct$id <- seq.int(nrow(textDataDistinct))
+
+# Set remove words
+# Automatically add app descriptions
+removeWords <- tolower(c(appStoreID_1["name"], appStoreID_2["name"]))
+
+# Set new data frame
+textClean_lower <- textDataDistinct
+
+# Lowercasing:
+### Convert all text to lowercase to ensure consistency in word representations. 
+### This helps in avoiding duplicate representations of words with different cases. 
+textClean_lower$text <- sapply(textClean_lower$text, tolower)
+
+# Handling URLs:
+textClean_urls <- textClean_lower
+textClean_urls$text <- gsub("http[^[:space:]]*", "", textClean_urls$text)
+
+write.csv(textClean_urls, "~/Desktop/text-clean-urls.csv")
+
+# Handling HTML tags:
+## Remove HTML tags, especially when dealing with web-scraped content.
+textClean_html <- textClean_urls
+textClean_html$text <- gsub("<.*?>", "", textClean_html$text)
+
+# Dealing with Emoji and Emoticons:
+## Decide whether to keep, replace, or remove emojis and emoticons based on the specific analysis. 
+### In some cases, they may convey sentiment and meaning.
+textClean_ascii <- textClean_html
+textClean_ascii$text  <- gsub("[^\x01-\x7F]", "", textClean_ascii$text)
+# https://stackoverflow.com/questions/44893354/remove-emoticons-in-r-using-tm-package
+
+# Handling Contractions and Abbreviations:
+## Expand contractions (e.g., "can't" to "cannot") and 
+## replace abbreviations with their full forms to ensure uniform representation.
+textClean_contractions <- textClean_ascii
+## "won't" is a special case as it does not expand to "will not"
+textClean_contractions$text <- gsub("won't", "will not", textClean_contractions$text)
+textClean_contractions$text <- gsub("can't", "can not", textClean_contractions$text)
+textClean_contractions$text <- gsub("n't", " not", textClean_contractions$text)
+textClean_contractions$text <- gsub("'ll", " will", textClean_contractions$text)
+textClean_contractions$text <- gsub("'re", " are", textClean_contractions$text)
+textClean_contractions$text <- gsub("'ve", " have", textClean_contractions$text)
+textClean_contractions$text <- gsub("'m", " am", textClean_contractions$text)
+textClean_contractions$text <- gsub("'d", " would", textClean_contractions$text)
+## 's could be 'is' or could be possessive: it has no expansion
+textClean_contractions$text <- gsub("'s", "", textClean_contractions$text)
+
+# Removing Punctuation:
+## Eliminate punctuation marks such as commas, periods, and question marks, as they may not contribute significantly to certain NLP tasks and can be considered noise.
+textClean_punctuation <- textClean_contractions
+textClean_punctuation$text <- gsub('[[:punct:]]', '', textClean_punctuation$text)
+
+# Remove Hashtags
+textClean_punctuation$text <- gsub("#\\S+", "", textClean_punctuation$text)
+
+# Remove Dollar Signs
+textClean_punctuation$text <- gsub('$\\S+', '', textClean_punctuation$text)
+
+# Remove Apostrophe ('/’)
+textClean_punctuation$text <- gsub("\\'\\S+", '', textClean_punctuation$text)
+textClean_punctuation$text <- gsub('’\\S+', '', textClean_punctuation$text)
+
+# Removing Special Characters:
+## Remove non-alphanumeric characters, symbols, 
+### or special characters that may not be relevant to the analysis.
+textClean_special <- textClean_punctuation
+textClean_special$text <- gsub('[[:cntrl:]]', '', textClean_special$text) 
+textClean_special$text <- gsub("\\d", '', textClean_special$text)
+textClean_special$text <- gsub("[^a-zA-Z0-9 ]", "", textClean_special$text)
+
+# Handling Numbers:
+## Decide whether to keep, replace, or remove numerical values based on the specific analysis. In some cases, numbers may be relevant (e.g., sentiment analysis on product reviews), while in others, they might be treated as noise.
+textClean_num <- textClean_special
+textClean_num$text <- gsub('[[:digit:]]+', '', textClean_num$text)
+textClean_num$text <- gsub('[0-9]+', '', textClean_num$text)
+
+# Removing Stopwords:
+## Eliminate common words (stopwords) such as "and," "the," and "is" that do not carry much information. Stopwords can be language-specific, and their removal can reduce the dimensionality of the data.
+
+# Get number of stop words
+# Stop words from package {tm} & {tidytext}
+# length(stop_words$word)
+
+removeWords <- c("draftkings", "draftking", "draft king", "fanduel")
+
+# Remove custom words
+textClean_stopwords <- textClean_num
+remove.pattern <- paste0("\\b(",paste0(removeWords, collapse="|"),")\\b") 
+textClean_stopwords$text <- gsub(remove.pattern, "", textClean_stopwords$text)
+
+# Remove stop words
+stopwordsPattern1 <- paste0("\\b(",paste0(stop_words$word[1:500], collapse="|"),")\\b") 
+textClean_stopwords$text <- gsub(stopwordsPattern1, "", textClean_stopwords$text)
+stopwordsPattern2 <- paste0("\\b(",paste0(stop_words$word[501:length(stop_words$word)], collapse="|"),")\\b") 
+textClean_stopwords$text <- gsub(stopwordsPattern2, "", textClean_stopwords$text)
+
+# Remove Short Words (3 words or less)
+textClean_short <- textClean_stopwords
+textClean_short$text <- gsub('\\b\\w{1,3}\\b','', textClean_short$text)
+
+# Remove Long Words
+textClean_long <- textClean_short
+textClean_long$text <- gsub('\\b\\w{15,35}\\b','', textClean_long$text)
+
+# Stemming and Lemmatization:
+## Reduce words to their base or root form to handle variations of words. Stemming involves removing prefixes or suffixes, while lemmatization involves converting words to their base or dictionary form.
+textClean_stem <- textClean_long
+textClean_stem$text <- SnowballC::wordStem(textClean_stem$text)
+# https://search.r-project.org/CRAN/refmans/SnowballC/html/wordStem.html
+
+# Trim White Spaces 修剪
+# user input data (computer cannot recognize white  space before and after; copy and paste can cause problems)
+textClean_ws <- textClean_stem
+textClean_ws$text <- gsub("^\\s{1,}|\\s{1,}$", "", textClean_ws$text)
+textClean_ws$text <- gsub("\\s{2,}", " ", textClean_ws$text)
+# Remove Leading Whitespaces
+textClean_ws$text <- gsub("^[[:space:]]*","",textClean_ws$text) 
+# Remove Trailing Whitespaces
+textClean_ws$text <- gsub("[[:space:]]*$","",textClean_ws$text) 
+# Remove Extra Whitespaces
+textClean_ws$text <- gsub(' +',' ',textClean_ws$text) 
+
+# Set final workable data frame
+textClean <- textClean_ws
+
+# Spell Checking and Correction:
+## Implement spell checking and correction algorithms 
+# to fix typos and improve the overall quality of the text.
+
+# Replace custom words
+textClean$text <- gsub("songs", "song", textClean$text)
+textClean$text <- gsub("listening", "listen", textClean$text)
+textClean$text <- gsub("stations", "station", textClean$text)
+textClean$text <- gsub("channels", "channel", textClean$text)
+textClean$text <- gsub("playlists", "playlist", textClean$text)
+```
+</details>
+
+### Available Stopwords Languages
+
+```{r echo = FALSE, eval = TRUE, "Stopwords Kable", purl=FALSE}
+stopwordsLanguages <- data.frame("Language" = c("SMART", "catalan", "danish", "dutch", "english", "finnish", "french", "german", "hungarian", "italian", "norwegian", "portuguese", "romanian", "russian", "spanish", "swedish"))
+knitr::kable(stopwordsLanguages) %>%
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+## Unigrams (Words)
+
+N-grams of texts are extensively used in text mining and natural language processing tasks. They are basically a set of co-occurring words within a given window and can be broken down into unigrams (single words) and bigrams (2 word phrases) or trigrams (3 word phrases). Analysis of each of these "ngrams" will yield varying results and it is important to observe all of them.
+
+Within the tidy text framework, we need to both break the text into individual tokens (a process called tokenization) and transform it to a tidy data structure.Tokenization breaks the text into individual words or tokens. This step is essential for counting word frequencies, analyzing word patterns, and preparing text for further analysis.
+
+<details>
+<summary>Show Unigrams Code</summary>
+```{r echo = TRUE, eval = TRUE, fig.width = 10, "Unigrams Count"}
+# Create new data frame
+textNgrams <- textClean
+
+# Extract words 
+textWords <- textNgrams %>%
+# Break down into individual words
+tidytext::unnest_tokens(word, text) %>% 
+# Remove custom words
+dplyr::filter(!word %in% removeWords) %>% 
+# Remove stop words
+dplyr::anti_join(stop_words, by="word") %>%
+# Make text id to group words back to full text
+dplyr::rename(text_id=id) 
+  
+# Reset id column
+textWords$id <- seq.int(nrow(textWords))
+
+# Count top unigrams
+unigramsCount <- textWords %>% 
+dplyr::group_by(word, desc) %>%
+dplyr::count(word, sort=TRUE) %>% 
+dplyr::arrange(desc(n))
+```
+Write the package name here, eg. "dplyr::", to make sure you use the right funtion inside of the package you want (Cuz there are many same name funtions in differnt packages).
+
+# Examine top words
+```{r echo = TRUE, eval = FALSE, "Unigrams Head"}
+head(unigramsCount, 5)
+```
+```{r echo = FALSE, eval = TRUE, "Unigrams Kable", purl=FALSE}
+knitr::kable(unigramsCount) %>%
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+### Plot word counts
+<details>
+<summary>Show Unigrams Plot Code</summary>
+```{r echo = TRUE, eval = TRUE, fig.width = 12, "Unigrams Chart"}
+# Make chart 1
+unigramsChart1 <- unigramsCount %>% 
+  dplyr::filter(desc==paste0(appStoreID_1["name"])) %>%
+  head(10) %>%
+ggplot(aes(x=reorder(word, -n), y=n, fill=as.factor(n))) + 
+geom_bar(stat="identity", show.legend=FALSE) + 
+labs(title=paste0("Top Words for ",appStoreID_1["name"]), 
+     y=element_blank(), x=element_blank()) +
+theme(axis.text.x=element_text(angle=25, vjust=1.0, hjust=1.0)) +
+theme_minimal() + coord_flip() + scale_fill_brewer(palette="BrBG")
+# ggplotly(unigramsChart1)
+
+# Make chart 2
+unigramsChart2 <- unigramsCount %>% 
+  dplyr::filter(desc==paste0(appStoreID_2["name"])) %>%
+  head(10) %>%
+ggplot(aes(x=reorder(word, -n), y=n, fill=as.factor(n))) + 
+geom_bar(stat="identity", show.legend=FALSE) + 
+labs(title=paste0("Top Words for ",appStoreID_2["name"]), 
+     y=element_blank(), x=element_blank()) +
+theme(axis.text.x=element_text(angle=25, vjust=1.0, hjust=1.0)) +
+theme_minimal() + coord_flip() + scale_fill_brewer(palette="BrBG")
+# ggplotly(unigramsChart2) 
+
+# Merge plots to single frame
+unigramCharts <- ggpubr::ggarrange(unigramsChart1, unigramsChart2, ncol = 2, nrow = 1)
+unigramCharts
+```
+</details>
+
+See more ggpubr options at 
+
+- https://cran.r-project.org/web/packages/ggpubr/ggpubr.pdf
+
+### Save plot to working directory
+```{r echo = TRUE, eval=FALSE}
+ggsave("word-charts.jpg", unigramCharts)
+```
+
+## Word Clouds
+
+From the word counts a word cloud was then created where the size of the word is based on the frequency of each word. A word cloud is a visual representation of text data in which words are displayed in varying sizes, with more prominent or larger words indicating higher frequency or importance. 
+
+It is a popular and effective way to provide a quick overview of the most significant terms within a body of text. The arrangement of words in a word cloud is typically random or designed to be visually appealing rather than following a specific order.
+
+See more at 
+
+- https://cran.r-project.org/web/packages/wordcloud2/vignettes/wordcloud.html
+- https://cran.r-project.org/web/packages/wordcloud/wordcloud.pdf
+
+<details>
+<summary>Show Wordclouds Plot Code</summary>
+```{r echo = TRUE, eval = TRUE, fig.height = 4, "Wordcloud Code"}
+if("wordcloud" %in% rownames(installed.packages()) == FALSE) {
+install.packages("wordcloud", dependencies = TRUE)}
+suppressPackageStartupMessages(library(wordcloud))
+if("wordcloud2" %in% rownames(installed.packages()) == FALSE) {
+install.packages("wordcloud2", dependencies = TRUE)}
+suppressPackageStartupMessages(library(wordcloud2))
+
+# Get top 50 words
+wordcloudData1 <- unigramsCount %>% 
+  dplyr::filter(desc==paste0(appStoreID_1["name"])) %>% head(50)
+
+# Format numeric column and summarize
+wordcloudData1$n <- as.numeric(wordcloudData1$n)
+wordcloudData1 <- wordcloudData1 %>% 
+  dplyr::group_by(word) %>% 
+  dplyr::summarize(n=sum(n, na.rm=TRUE)) %>% 
+  dplyr::ungroup() %>%
+dplyr::arrange(desc(n)) 
+
+# Plot HTML Word Cloud
+# wordcloudHTML1 <- wordcloudData1 %>% wordcloud2::wordcloud2(size=1.0)	
+
+# Get top 50 words
+wordcloudData2 <- unigramsCount %>% 
+  dplyr::filter(desc==paste0(appStoreID_2["name"])) %>% head(50)
+
+# Format numeric column and summarize
+wordcloudData2$n <- as.numeric(wordcloudData2$n)
+wordcloudData2 <- wordcloudData2 %>% 
+  dplyr::group_by(word) %>% 
+  dplyr::summarize(n=sum(n, na.rm=TRUE)) %>% 
+  dplyr::ungroup() %>%
+dplyr::arrange(desc(n)) 
+
+# Plot HTML Word Cloud
+# wordcloudHTML2 <- wordcloudData2 %>% wordcloud2::wordcloud2(size=1.0)	
+
+```
+</details>
+
+# Plot word cloud
+Can add just take words more than 10 times being take into the world cloud.
+```{r echo = TRUE, eval = TRUE, fig.height = 4, fig.width = 12, "Wordcloud 1 Plot"}
+wordcloud(words = wordcloudData1$word, freq = wordcloudData1$n, 
+min.freq=1, max.words=200, random.order=FALSE, rot.per=0.35, 
+colors=brewer.pal(8, "Dark2"))
+```
+
+### Make wordcloud for query 2
+Remove the biggest word you look at, like if you are looking at "music", then maybe you need ti remove "music" from word cloud. That's why remove "draftking" here.
+```{r echo = TRUE, eval = TRUE, fig.height = 4, fig.width = 12, "Wordcloud 2 Plot"}
+# Plot word cloud
+wordcloud(words = wordcloudData2$word, freq = wordcloudData2$n, 
+min.freq = 1, max.words=200,  random.order=FALSE, rot.per=0.35, 
+colors=brewer.pal(8, "Dark2"))
+```
+
+### Bigrams (Two Word Phrases)
+
+Bigrams are pairs of consecutive words that occur together in a given sequence of text. In natural language processing (NLP) and computational linguistics, bigrams are a type of n-gram, where "n" refers to the number of consecutive items (in this case, words) considered together. 
+
+Specifically, bigrams are concerned with adjacent pairs of words.
+To compute bigrams and trigrams, the text is typically tokenized into individual words, and then pairs of consecutive words are formed. The frequency of occurrence of each ngram can be analyzed to gain insights into the structure and patterns within the text.
+
+<details>
+<summary>Show Bigrams Ngrams Code</summary>
+```{r echo = TRUE, eval = TRUE, "Bigrams"}
+# Get bigrams from text
+bigramsNgrams <- textNgrams %>% 
+tidytext::unnest_tokens(bigram, text, token="ngrams", n=2) %>%
+dplyr::select(id, bigram, desc) %>% na.omit()
+
+# Separate bigrams
+bigramsSeparated <- bigramsNgrams %>% 
+separate(bigram, c("word1", "word2"), sep=" ") 
+
+# New bigram count
+bigramsCount <- bigramsSeparated %>% 
+group_by(word1, word2, desc) %>%
+dplyr::count(word1, word2, sort=TRUE) %>% 
+mutate(bigram=paste0(word1, " ", word2)) %>% 
+ungroup() %>% 
+arrange(desc(n))
+```
+</details>
+
+### Examine top bigrams
+```{r echo = TRUE, eval = FALSE, "Bigrams Head"}
+head(bigramsCount, 5)
+```
+```{r echo = FALSE, eval = TRUE, "Bigrams Kable", purl=FALSE}
+knitr::kable(bigramsCount) %>%
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+### Plot bigram charts
+<details>
+<summary>Show Bigrams Plot Code</summary>
+```{r echo = TRUE, eval = TRUE, fig.width = 12, "Bigrams Charts 1"}
+# Plot bigram chart
+bigramsChart1 <- bigramsCount %>% 
+  dplyr::filter(desc==paste0(appStoreID_1["name"])) %>%
+  head(10) %>% dplyr::ungroup() %>%
+ggplot(aes(x=reorder(bigram, n), y=n, fill=as.factor(n))) + 
+geom_bar(stat="identity", show.legend=FALSE) + 
+labs(title=paste0("Top Bigrams for ", appStoreID_1["name"]), 
+     y=element_blank(), x=element_blank()) +
+theme(axis.text.x=element_text(angle=25, vjust=1.0, hjust=1.0)) + 
+theme_minimal() + coord_flip() + scale_fill_viridis_d()
+# ggplotly(bigramsChart1) 
+# bigramsChart1
+```
+</details>
+
+```{r echo = FALSE, eval = TRUE, fig.width = 12, "Bigrams Charts 2"}
+# Plot bigram chart
+bigramsChart2 <- bigramsCount %>% 
+  dplyr::filter(desc==paste0(appStoreID_2["name"])) %>%
+  head(10) %>% dplyr::ungroup() %>%
+ggplot(aes(x=reorder(bigram, n), y=n, fill=as.factor(n))) + 
+geom_bar(stat="identity", show.legend=FALSE) + 
+labs(title=paste0("Top Bigrams for ", appStoreID_2["name"]), 
+     y=element_blank(), x=element_blank()) +
+theme(axis.text.x=element_text(angle=25, vjust=1.0, hjust=1.0)) + 
+theme_minimal() + coord_flip() + scale_fill_viridis_d()
+# ggplotly(bigramsChart2) 
+# bigramsChart2
+
+# Merge plots to single frame
+bigramsCharts <- ggpubr::ggarrange(bigramsChart1, bigramsChart2, ncol = 2, nrow = 1)
+bigramsCharts
+```
+
+## Trigrams (Three Word Phrases)
+
+A trigram is a contiguous sequence of three items, typically words, characters, or symbols, within a given context. In the context of natural language processing (NLP), trigrams are often used to analyze and model the relationships between words in a sequence of text. Trigrams follow the general concept of n-grams, where "n" represents the number of items in the sequence.
+
+Trigrams are useful in various NLP tasks, and they provide a more detailed context compared to bigrams (sequences of two items) or unigrams (individual items). While trigrams offer more context than bigrams, they also increase the dimensionality of the data, and their usefulness depends on the specific NLP task at hand. The choice of n-grams (unigrams, bigrams, trigrams, etc.) is often based on the complexity of the language patterns the model needs to capture and the computational resources available for analysis.
+
+<details>
+<summary>Show Trigrams Ngrams Code</summary>
+```{r echo = TRUE, eval = TRUE, "Trigrams"}
+# Get trigrams from text
+trigramsNgrams <- textNgrams %>% 
+tidytext::unnest_tokens(trigram, text, token="ngrams", n=3) %>%
+dplyr::select(id, trigram, desc) %>% na.omit()
+
+# Separate trigrams
+trigramsSeparated <- trigramsNgrams %>% 
+separate(trigram, c("word1", "word2", "word3"), sep=" ")
+
+# New trigram count
+trigramsCount <- trigramsSeparated %>% 
+dplyr::group_by(word1, word2, word3, desc) %>%
+dplyr::summarize(n=n(), .groups='keep') %>% 
+dplyr::mutate(trigram=paste0(word1, " ", word2, " ", word3)) %>% 
+dplyr::ungroup() %>% 
+dplyr::arrange(desc(n))
+```
+</details>
+
+### Examine top trigrams
+```{r echo = TRUE, eval = FALSE, "Trigrams Head"}
+head(trigramsCount, 5)
+```
+```{r echo = FALSE, eval = TRUE, "Trigrams Kable", purl=FALSE}
+knitr::kable(trigramsCount) %>%
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+### Plot trigram charts
+<details>
+<summary>Show Trigrams Plot Code</summary>
+```{r echo = TRUE, eval = TRUE, fig.width = 12, "Trigrams Charts"}
+# Plot trigram chart
+trigramsChart1 <- trigramsCount %>% 
+  dplyr::filter(desc==paste0(appStoreID_1["name"])) %>%
+  head(10) %>% dplyr::ungroup() %>%
+ggplot(aes(x=reorder(trigram, n), y=n, fill=as.factor(n))) + 
+geom_bar(stat="identity", show.legend=FALSE) + 
+labs(title=paste0("Top Trigrams for ", appStoreID_1["name"]), 
+     y=element_blank(), x=element_blank()) +
+theme(axis.text.x=element_text(angle=25, vjust=1.0, hjust=1.0)) + 
+theme_minimal() + coord_flip() + scale_fill_viridis_d()
+# ggplotly(trigramsChart1) 
+# trigramsChart1
+```
+</details>
+
+```{r echo = FALSE, eval = TRUE, fig.width = 12, "Trigrams Charts 2"}
+# Plot trigram chart
+trigramsChart2 <- trigramsCount %>% 
+  dplyr::filter(desc==paste0(appStoreID_2["name"])) %>%
+  head(10) %>% dplyr::ungroup() %>%
+ggplot(aes(x=reorder(trigram, n), y=n, fill=as.factor(n))) + 
+geom_bar(stat="identity", show.legend=FALSE) + 
+labs(title=paste0("Top Trigrams for ", appStoreID_2["name"]), 
+     y=element_blank(), x=element_blank()) +
+theme(axis.text.x=element_text(angle=25, vjust=1.0, hjust=1.0)) + 
+theme_minimal() + coord_flip() + scale_fill_viridis_d()
+# ggplotly(trigramsChart2) 
+# trigramsChart2
+
+# Merge plots to single frame
+trigramsCharts <- ggpubr::ggarrange(trigramsChart1, trigramsChart2, ncol = 2, nrow = 1)
+trigramsCharts
+```
+
+### Assigning NRC Sentiment
+
+Sentiment is gathered using the NRC sentiment lexicon. The NRC Emotion Lexicon is a list of English words and their associations with eight basic emotions (anger, fear, anticipation, trust, surprise, sadness, joy, and disgust) and two sentiments (negative and positive). The annotations were manually done by crowdsourcing.
+
+The NRC (National Research Council) Sentiment Lexicon is a resource for sentiment analysis, providing a collection of words categorized based on their association with eight different emotions and sentiments. The lexicon was created by the NRC in Canada and is widely used in natural language processing (NLP) and sentiment analysis tasks. Each word in the lexicon is tagged with binary values indicating whether the word is associated with a particular sentiment or not.
+
+For each word in the lexicon, there are binary indicators for each of the eight sentiments. A value of 1 indicates that the word is associated with that sentiment, while a value of 0 indicates no association.
+
+Researchers and practitioners use the NRC Sentiment Lexicon to enhance sentiment analysis models by leveraging pre-defined sentiment labels for a wide range of words. It is particularly useful for tasks where a comprehensive set of sentiment-labeled words is needed.
+
+In addition to individual word analysis, the lexicon can be used to analyze the sentiment of entire texts by aggregating the sentiment scores of constituent words. This lexicon-based approach is a foundational method in sentiment analysis, and the NRC Sentiment Lexicon is a valuable resource in this context.
+
+Read more at 
+
+  - https://saifmohammad.com/WebPages/NRC-Emotion-Lexicon.htm
+  - https://cran.r-project.org/web/packages/syuzhet/vignettes/syuzhet-vignette.html
+
+```{r echo = TRUE, eval = TRUE, "NRC Sentiment"}
+if("syuzhet" %in% rownames(installed.packages()) == FALSE) {
+install.packages("syuzhet", dependencies = TRUE)}
+suppressPackageStartupMessages(library(syuzhet))
+
+### Calculate NRC Sentiment
+sentimentNRC <- syuzhet::get_nrc_sentiment(textClean$text)
+sentimentNRC$id <- seq.int(nrow(sentimentNRC))
+
+# Join cleaned text and sentiment
+sentimentJoin <- textClean %>%
+  dplyr::left_join(sentimentNRC, by="id")
+```
+
+### Examine joined sentiment
+```{r echo = TRUE, eval = FALSE, "Sentiment Join Head"}
+head(sentimentJoin, 5)
+```
+```{r echo = FALSE, eval = TRUE, "Sentiment Join Kable", purl=FALSE}
+knitr::kable(sentimentJoin) %>%
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+### NRC Sentiment Valence
+
+In the context of sentiment analysis, NRC Sentiment Valence is a specific aspect of the National Research Council (NRC) Sentiment Lexicon, which is a resource that categorizes words based on their association with various sentiments and emotions. The NRC Sentiment Lexicon includes sentiment valence scores, providing a quantitative measure of the positive or negative sentiment associated with each word.
+
+The sentiment valence scores in the NRC lexicon typically range between 0 and 1, with 0 representing a negative sentiment and 1 representing a positive sentiment. These scores quantify the strength or intensity of the emotional tone conveyed by each word. Words that are more strongly associated with positive sentiments have higher valence scores, while those associated with negative sentiments have lower valence scores.
+
+For example, consider the word "happy." In the NRC Sentiment Lexicon, "happy" might have a high positive valence score, close to 1, indicating a strong association with positive sentiment. Conversely, a word like "sad" might have a low positive valence score or even a negative valence score, indicating a strong association with negative sentiment.
+Researchers and practitioners use sentiment valence scores for words to assess the overall sentiment of a piece of text or to calculate sentiment scores for longer texts by aggregating the valence scores of individual words. This lexicon-based approach is a fundamental method in sentiment analysis.
+
+Here is a simplified example:
+
+  - Word: "happy"
+  - Positive Valence Score: 0.9
+
+In this example, the positive valence score of 0.9 suggests that "happy" is strongly associated with positive sentiment. Sentiment valence scores enable a more nuanced analysis of the emotional content within text data, providing a continuous scale to measure the strength of sentiments associated with individual words.
+
+```{r echo = TRUE, eval = TRUE, "NRC Sentiment Valence"}
+# Get NRC sentiment valence
+sentimentJoin$valence <- syuzhet::get_sentiment(sentimentJoin$text, "syuzhet")
+```
+
+### Examine structure
+```{r echo = TRUE, eval = FALSE, "NRC Join STR"}
+str(sentimentJoin)
+```
+```{r echo = FALSE, eval = TRUE, "NRC Join Kable", purl=FALSE}
+knitr::kable(get_structure_table(sentimentJoin)) %>%
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+### Word Level NRC Sentiment
+
+The following section of code is designed to allow you to run analysis on larger sets of data on machines with less computing and processing power. Running sentiment for each individual word multiples the size of the original data set of text by orders of magnitude.
+
+Breaking the data up into smaller chunks will help a lot. Without doing this, it will take a long time if it works at all on larger data sets to process NRC sentiment and some other functions. This code using an lapply() function divides the data frame up into a list with smaller data frames and then runs a function on all of those individual data frames. 
+
+<details>
+<summary>Show Word Level NRC Sentiment Code</summary>
+```{r echo = TRUE, eval = TRUE, "Word Sentiment"}
+# Split large data frame into list of smaller data frames
+wordSplit <- split(textWords, (seq(nrow(textWords))-1) %/% 1000)
+# length(wordSplit)
+# View(wordSplit)
+
+# Calculate Word Level NRC Sentiment
+listLength <- as.numeric(length(wordSplit))
+wordsSentimentList <- lapply(
+names(wordSplit), 
+function(x) {
+# message(paste0("Getting NRC sentiment for ", (as.numeric(x)+1), "/", (listLength)))	
+data <- syuzhet::get_nrc_sentiment(wordSplit[[x]]$word)
+data$valence <- syuzhet::get_sentiment(wordSplit[[x]]$word, "syuzhet")
+return(data)
+}) # End function
+
+# Convert lists to data frame
+wordsSentimentData <- lapply(wordsSentimentList, as.data.frame)
+wordsSentiment <- plyr::ldply(wordsSentimentList, rbind)
+
+# Add id column
+wordsSentiment$id <- seq.int(nrow(wordsSentiment))
+
+# Join cleaned text and sentiment
+sentimentWordsJoin <- textWords %>%
+  dplyr::left_join(wordsSentiment, by="id")
+
+# Examine structure
+# str(sentimentWordsJoin)
+```
+</details>
+
+## Long Form & Wide Form Data
+
+Long-form and wide-form are two common ways to organize and structure data, particularly in the context of datasets and dataframes. These terms are often used in the field of data manipulation and analysis, and they describe different orientations of data.
+
+### Long-Form Data:
+
+In long-form data, each row of the dataset represents a unique observation or case, and each column represents a variable. This format is sometimes referred to as "tidy data." The dataset is structured in a way that makes it easy to extend and accommodate additional variables without changing the structure of the dataset. Long-form data is particularly useful for scenarios where you have multiple measurements or attributes for each observation, and it facilitates the use of tools like the tidyverse in R or pandas in Python for data manipulation.
+
+### Wide-Form Data:
+
+In wide-form data, each row still represents an observation, but each variable may have its own column. This format is common in spreadsheet-like structures and is often more intuitive for certain types of analyses. Wide-form data is suitable when the dataset has a small to moderate number of variables, and the focus is on a subset of those variables for a particular analysis. It may be less convenient when dealing with a large number of variables or when trying to perform certain types of data manipulations.
+
+<details>
+<summary>Show Wide Form Data Code</summary>
+```{r echo = TRUE, eval = TRUE, "Sentiment Wide Form"}
+# Notice how there is two time based variables? Datetime and Date? Using datetime instead of the date column will allow for more in-depth results than using just the date. Also if just the date is needed for a portion of analysis then the datetime can be rounded up to a single day and grouped and summarized. 
+# There are also other columns not needed for the analysis. 
+sentimentNRCwide <- sentimentJoin %>% as.data.frame() %>% 
+dplyr::select(title, rating, datetime, desc, all_of(colnames(sentimentNRC))) %>%
+  dplyr::select(-id)
+
+# Convert data from long to wide format
+sentimentNRCwide <- sentimentNRCwide %>%
+reshape2::melt(variable.name="nrc", value.name="sentiment", 
+id.vars=c("title", "rating", "datetime", "desc"))
+
+# Reset variable factors
+sentimentNRCwide$desc <- as.factor(sentimentNRCwide$desc)
+sentimentNRCwide$nrc <- as.factor(sentimentNRCwide$nrc)
+sentimentNRCwide$sentiment <- as.numeric(sentimentNRCwide$sentiment)
+
+# Format new NRC column
+sentimentNRCwide$nrc <- stringr::str_to_title(sentimentNRCwide$nrc)
+```
+</details>
+
+### Examine data structure
+```{r echo = TRUE, eval = FALSE, "Sentiment Wide Head"}
+str(sentimentNRCwide)
+```
+```{r echo = FALSE, eval = TRUE, "Sentiment Wide Kable", purl=FALSE}
+knitr::kable(get_structure_table(sentimentNRCwide)) %>%
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+## NRC Sentiment Summary
+```{r echo = T, eval = TRUE, "Sentiment Summary"}
+sentimentBarchartData <- sentimentNRCwide %>% 
+dplyr::group_by(nrc, desc) %>% 
+dplyr::summarise(n=mean(sentiment, na.rm=TRUE), .groups="keep") %>%
+dplyr::ungroup()
+```
+
+### Examine sentiment summary data structure
+```{r echo = TRUE, eval = FALSE, "Sentiment Summary Head"}
+head(sentimentBarchartData,5)
+```
+```{r echo = FALSE, eval = TRUE, "Sentiment Summary Kable", purl=FALSE}
+knitr::kable(sentimentBarchartData) %>%
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+### Plot NRC sentiment barchart
+<details>
+<summary>Show NRC Sentiment Bar Chart Code</summary>
+```{r echo = TRUE, eval = TRUE, results='asis', fig.width = 10, "Sentiment Barchart"}
+sentimentBarchart <- sentimentBarchartData %>%
+ggplot2::ggplot(aes(x=nrc, y=n, fill=desc)) + 
+ggplot2::geom_bar(stat="identity", position="dodge") + 
+theme_minimal() + 
+theme(
+  axis.text.x=element_text(angle=25, vjust=1.0, hjust=1.0),
+  legend.position="bottom"
+  ) + 
+labs(title="NRC Sentiment Comparison", y="Total Sentiment", x="Emotion") + 
+scale_fill_discrete(name="Rating")
+# print(plotly::ggplotly(sentimentBarchart))
+# sentimentBarchart
+```
+</details>
+
+```{r echo = FALSE, eval = TRUE, results='asis', fig.width = 10, "Sentiment Barchart Plot"}
+sentimentBarchart
+```
+
+## Sentiment Statistical Tests
+
+The independent samples t-test is used to compare two sample means from unrelated groups. This means that there are different people providing scores for each group. The purpose of this test is to determine if the samples are different from each other.
+
+* Basic Hypotheses
+  + Null: The sample mean from Group 1 is not different from the sample mean from Group 2.
+  + Alternative: The sample mean from Group 1 is significantly different from the sample mean from Group 2.
+
+When reporting the p-value, there are two ways to approach it. 
+
+1. One is when the results are not significant. In that case, you want to report the p-value exactly: p = .24. 
+
+2. The other is when the results are significant. In this case, you can report the p-value as being less than the level of significance: p < .05.
+
+Doing this will allow you to conduct a true statistical test, rather than just saying “the graph of company A looks more positive”.
+
+<details>
+<summary>Show Sentiment T-Test Code</summary>
+```{r echo = TRUE, eval=TRUE, fig.width = 10, fig.height = 7, "Sentiment T-Test"}
+# Subset columns for boxplot
+sentimentTtest <- sentimentNRCwide %>% 
+dplyr::select(nrc, sentiment, desc) 
+
+# Sentiment T-Test
+sentimentBoxplot <- sentimentTtest %>% 
+ggpubr::ggboxplot(x="desc", y="sentiment", color="desc", add="jitter") + 
+theme_bw() + theme(legend.position="bottom") +
+ggplot2::facet_wrap(~ nrc, ncol=4) + 
+labs(title="NRC Sentiment T-Test", 
+y="Sentiment Valence", x=element_blank(), 
+color=element_blank(), fill=element_blank()) + 
+ggpubr::stat_compare_means(method="t.test", vjust = 0.95,
+mapping=aes(label=format.pval(after_stat(p.adj), digits=1)))
+# https://www.rdocumentation.org/packages/ggpubr/versions/0.6.0/topics/stat_compare_means
+plotly::ggplotly(sentimentBoxplot)
+# sentimentBoxplot
+```
+</details>
+
+```{r echo = FALSE, eval = TRUE, results='asis', fig.width = 10, "Sentiment Boxplot Plot"}
+sentimentBoxplot
+```
+
+## NRC Sentiment Time Series
+
+A sentiment time series refers to a chronological sequence of sentiment scores or measures over a period of time. Sentiment analysis involves assessing the emotional tone, attitude, or opinions expressed in textual content, and when performed over time, it provides insights into the temporal dynamics of sentiments. A sentiment time series is particularly useful for tracking changes in public opinion, customer feedback, or social media sentiment over different time intervals.
+
+##### Set absolute or relative scale across sentiments
+
+First set the y-axis scale to be a range from 0 to the max sentiment value across all different emotions. This will keep the scale the same across all sentiments to show relative levels.
+
+- scale_y_continuous(limits = c(0, max(sentimentTS1$sentiment)))
+
+##### Set relative scale across sentiments
+
+Next to see more granular views of each sentiment over time comment out or remove this line to allow each y-axis to scale based on the values within the sentiment iteself.
+
+- scale_y_continuous(limits = c(0, max(sentimentTS1$sentiment)))
+
+For setting date time breaks and axis labels see:
+
+- https://www.stat.berkeley.edu/~s133/dates.html
+- https://stackoverflow.com/questions/38959566/axis-labels-and-limits-with-ggplot-scale-x-datetime
+
+<details>
+<summary>Show Sentiment Time Series Code</summary>
+```{r echo = TRUE, eval = TRUE, "Sentiment TS"}
+# Make new data frame
+sentimentTS <- sentimentNRCwide 
+
+# Format time
+sentimentTS$datetime <- strptime(sentimentTS$datetime, format="%Y-%m-%d %H:%M:%S")
+# sentimentTS$datetime  <- as.POSIXct(sentimentTS$datetime, tz="America/New_York")
+sentimentTS$datetime  <- as.POSIXct(sentimentTS$datetime, tz="America/Detroit")
+# is.POSIXct(sentimentTS$datetime)
+
+# Round date to 1 day
+sentimentTS$date <- as.Date(lubridate::round_date(sentimentTS$datetime, "1 day"))
+
+# Summarize by day
+sentimentTS <- sentimentTS %>%
+group_by(date, desc, nrc) %>%
+dplyr::summarize(
+sentiment=mean(sentiment, .na.rm=TRUE), 
+.groups="drop") %>%
+dplyr::ungroup()
+```
+</details>
+
+### Examine time series data structure
+```{r echo = TRUE, eval = FALSE, "Sentiment TS Head"}
+str(sentimentTS)
+```
+```{r echo = FALSE, eval = TRUE, "Sentiment TS Kable", purl=FALSE}
+knitr::kable(get_structure_table(sentimentTS)) %>%
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+### NRC Sentiment Time Series Charts {.tabset}
+
+#### All Apps
+
+<details>
+<summary>Show Sentiment Time Series Chart Code</summary>
+```{r echo = TRUE, eval = TRUE, fig.width = 10, "TS Charts"}
+sentimentTSplot <- sentimentTS %>%
+mutate(date=as.POSIXct(date)) %>%
+ggplot(aes(x=date, y=sentiment, color=desc, group=desc)) +
+geom_smooth(span=0.5, se=FALSE, method='loess', formula ='y~x') +
+facet_wrap(~ nrc, scale="free_y", nrow=2) +
+# Set scale to be range from 0 to max sentiment value
+# This will keep the scale the same across all sentiments
+scale_y_continuous(limits = c(0, max(sentimentTS$sentiment))) +
+# Set datetime breaks by frequency
+scale_x_datetime(date_breaks="1 weeks", date_labels="%b %d") +
+theme_bw() + 
+  theme(
+    text=element_text(family="Georgia"),
+    plot.title=element_text(face="bold"), 
+    axis.text=element_text(size=9), 
+    axis.text.x=element_text(angle=25, vjust=1.0, hjust=1.0),
+    legend.position="bottom",
+    legend.title=element_blank()) +
+labs(x=NULL, y=NULL, color="App", fill="App", 
+title="NRC Sentiment over Time for all Apps")
+# sentimentTSplot
+```
+</details>
+
+```{r echo = TRUE, eval = TRUE, fig.width = 12, "TS Chart Plot"}
+sentimentTSplot
+```
+
+#### Spotify
+
+<details>
+<summary>Show Sentiment Time Series Chart 2 Code</summary>
+```{r echo = TRUE, eval = TRUE, fig.width = 12, "TS Chart 1"}
+sentimentTS1 <- sentimentTS %>% as.data.frame() %>%
+dplyr::filter(desc==paste0(appStoreID_1["name"])) 
+
+sentimentTSplot1 <- sentimentTS1 %>%
+mutate(date=as.POSIXct(date)) %>%
+ggplot(aes(x=date, y=sentiment, color=nrc, group=nrc)) +
+geom_smooth(span=0.5, se=FALSE, method='loess', formula ='y~x') +
+facet_wrap(~ nrc, scale="free_y", nrow=2) +
+# Set scale to be range from 0 to max sentiment value
+# This will keep the scale the same across all sentiments
+scale_y_continuous(limits = c(0, max(sentimentTS1$sentiment))) +
+# Set datetime breaks by frequency
+scale_x_datetime(date_breaks="3 days", date_labels="%b %d") +
+theme_bw() + 
+  theme(
+    text=element_text(family="Georgia"),
+    plot.title=element_text(face="bold"), 
+    axis.text=element_text(size=9), 
+    axis.text.x=element_text(angle=25, vjust=1.0, hjust=1.0),
+    legend.position="bottom",
+    legend.title=element_blank()) +
+labs(x=NULL, y=NULL, color="App", fill="App", 
+title=paste0("NRC Sentiment over Time for ", appStoreID_1["name"]))
+sentimentTSplot1
+```
+</details>
+
+```{r echo = TRUE, eval = TRUE, fig.width = 12, "TS Chart 1 Plot"}
+sentimentTSplot1
+```
+
+#### Query 2
+
+<details>
+<summary>Show Sentiment Time Series Chart 3 Code</summary>
+```{r echo = FALSE, eval = TRUE, fig.width = 12, "TS Chart 2"}
+sentimentTS2 <- sentimentTS %>% as.data.frame() %>%
+dplyr::filter(desc==paste0(appStoreID_2["name"])) %>%
+mutate(date=as.POSIXct(date)) 
+
+sentimentTSplot2 <- sentimentTS2 %>%
+ggplot(aes(x=date, y=sentiment, color=nrc, group=nrc)) +
+geom_smooth(span=0.5, se=FALSE, method='loess', formula ='y~x') +
+facet_wrap(~ nrc, scale="free_y", nrow=2) +
+# Set scale to be range from 0 to max sentiment value
+# This will keep the scale the same across all sentiments
+scale_y_continuous(limits = c(0, max(sentimentTS1$sentiment))) +
+scale_x_datetime(date_breaks="1 week", date_labels="%b %d") +
+theme_bw() + 
+  theme(
+    text=element_text(family="Georgia"),
+    plot.title=element_text(face="bold"), 
+    axis.text=element_text(size=9), 
+    axis.text.x=element_text(angle=25, vjust=1.0, hjust=1.0),
+    legend.position="bottom",
+    legend.title=element_blank()) +
+labs(x=NULL, y=NULL, color="App", fill="App", 
+title=paste0("NRC Sentiment over Time for ", appStoreID_2["name"]))
+# sentimentTSplot2
+```
+</details>
+
+```{r echo = TRUE, eval = TRUE, fig.width = 12, "TS Chart 2 Plot"}
+sentimentTSplot2
+```
+
+#### Relative Scale
+
+<details>
+<summary>Show Sentiment Time Series Chart 3 Code</summary>
+```{r echo = FALSE, eval = TRUE, fig.width = 12, "TS Chart 3 Granular"}
+sentimentTS3 <- sentimentTS %>% as.data.frame() %>%
+dplyr::filter(desc==paste0(appStoreID_2["name"])) %>%
+dplyr::mutate(date=as.POSIXct(date)) 
+
+sentimentTSplot3 <- sentimentTS3 %>%
+ggplot(aes(x=date, y=sentiment, color=nrc, group=nrc)) +
+geom_smooth(span=0.5, se=FALSE, method='loess', formula ='y~x') +
+facet_wrap(~ nrc, scale="free_y", nrow=2) +
+# scale_y_continuous(limits = c(0, max(sentimentTS1$sentiment))) +
+scale_x_datetime(date_breaks="1 week", date_labels="%b %d") +
+theme_bw() + 
+  theme(
+    text=element_text(family="Georgia"),
+    plot.title=element_text(face="bold"), 
+    axis.text=element_text(size=9), 
+    axis.text.x=element_text(angle=25, vjust=1.0, hjust=1.0),
+    legend.position="bottom",
+    legend.title=element_blank()) +
+labs(x=NULL, y=NULL, color="App", fill="App", 
+title=paste0("NRC Sentiment over Time for ", appStoreID_2["name"]))
+```
+</details>
+
+```{r echo = TRUE, eval = TRUE, fig.width = 12, "TS Chart 3 Granular Plot"}
+sentimentTSplot3
+```
+
+### Examine reasons behind sentiment changes
+
+<details>
+<summary>Show Sentiment Correlation Code</summary>
+```{r echo = TRUE, eval = TRUE, "TS Function Data"}
+
+# Format to wide structure
+sentimentWordsNRCwide <- sentimentWordsJoin %>%
+  dplyr::select(word, rating, datetime, desc, anger:positive) %>%
+  reshape2::melt(variable.name="nrc", value.name="sentiment", 
+                 id.vars=c("word", "rating", "datetime", "desc"))
+
+# Set NRC column as factor
+sentimentWordsNRCwide$nrc <- as.factor(sentimentWordsNRCwide$nrc)
+
+# Count Words
+sentimentWords <- sentimentWordsNRCwide %>%
+  dplyr::filter(!sentiment==0) %>%
+  dplyr::group_by(nrc, desc, rating) %>% 
+  dplyr::count(word, sort=TRUE) %>%
+  dplyr::arrange(desc(n)) %>% 
+  # dplyr::slice(seq_len(8)) %>% 
+  dplyr::top_n(8, wt=n) %>% 
+  dplyr::arrange(desc(n)) %>%
+  dplyr::ungroup()
+
+# Make new data frame
+sentimentWordsDateCount <- sentimentWordsNRCwide %>%
+  dplyr::filter(rating > 3)
+
+# Use {lubridate} to round date and datetime variables
+sentimentWordsDateCount$date <- lubridate::round_date(as.Date(sentimentWordsDateCount$datetime), "1 day")
+sentimentWordsDateCount$week <- lubridate::round_date(as.Date(sentimentWordsDateCount$datetime), "1 week")
+
+# Get filter words
+filterWords <- unigramsCount %>%
+dplyr::filter(desc %in% c(appStoreID_2["name"])) %>% head(5)
+# head(filterWords)
+
+# Remove common words across all days
+nrcWordsTSdata <- sentimentWordsDateCount %>%
+dplyr::filter(!word %in% filterWords$word) %>%
+dplyr::filter(desc %in% c(appStoreID_2["name"]))
+# head(nrcWordsTSdata,5)
+# str(nrcWordsTSdata)
+# View(nrcWordsTSdata)
+
+# Get distinct weeks
+distinctWeeks <- sort(unique(nrcWordsTSdata$week))
+# distinctWeeks
+```
+
+### Check correlation between sentiment and ratings
+
+See more {corrplot} plot options at:
+
+- https://cran.r-project.org/web/packages/corrplot/vignettes/corrplot-intro.html
+
+<details>
+<summary>Show Sentiment Ratings Correlation Code</summary>
+```{r echo = TRUE, eval = TRUE, fig.width = 12, "Correlation Matrix"}
+if("reshape2" %in% rownames(installed.packages()) == FALSE) {
+install.packages("reshape2", dependencies = TRUE)}
+suppressPackageStartupMessages(library(reshape2))
+
+if("corrplot" %in% rownames(installed.packages()) == FALSE) {
+install.packages("corrplot", dependencies = TRUE)}
+suppressPackageStartupMessages(library(corrplot))
+
+# Select sentiment and rating columns
+correlationSentiment <- sentimentJoin %>% 
+dplyr::select(id, anger:positive)
+
+correlationRating <- sentimentJoin %>%
+dplyr::select(id, rating) %>%
+dplyr::mutate(group=paste0("Stars",rating)) %>%
+# Reshape data from long to wide form
+# https://stackoverflow.com/questions/5890584/how-to-reshape-data-from-long-to-wide-format
+reshape2::dcast(id ~ group, value.var="rating")
+correlationRating[is.na(correlationRating)] <- 0
+# Get structure
+# str(correlationRating)
+# nrow(correlationRating)
+# nrow(correlationSentiment)
+
+## Make correlation matrix 
+ratingCol <- c("Stars1", "Stars2", "Stars3", "Stars4", "Stars5")
+otherCol <- c("anger", "anticipation", "disgust", "fear", 
+"joy", "sadness", "surprise", "trust", "negative", "positive")
+correlationMatrix <- cor(correlationRating[,ratingCol], 
+            correlationSentiment[,otherCol])
+
+```
+</details>
+
+```{r echo = TRUE, eval = TRUE, fig.width = 12, "Correlation Matrix Plot"}
+# Print correlation plot 1
+corrplot::corrplot(correlationMatrix, 
+                   method="color", 
+                   insig = 'p-value',
+                   addCoef.col = 'grey20',
+                   is.corr=FALSE)
+```   
+
+### Make function to dynamically render charts for analysis
+
+<details>
+<summary>Show Sentiment Words Function Code</summary>
+```{r echo = TRUE, eval = TRUE, "TS Function"}
+# Function to make chart by date
+get_sentiment_words_by_date <- function(df, filterDate, filterNRC, filterN=5) {
+
+# Intended for use with a data.table 'where'
+# Don't use * or % like SQL's like.  Uses regexpr syntax - more powerful.
+# returns 'logical' so can be combined with other where clauses.
+like = function(vector, pattern, ignore.case = FALSE, fixed = FALSE) {
+  if (is.factor(vector)) {
+    as.integer(vector) %in% grep(pattern, levels(vector), ignore.case = ignore.case, fixed = fixed)
+  } else {
+    # most usually character, but integer and numerics will be silently coerced by grepl
+    grepl(pattern, vector, ignore.case = ignore.case, fixed = fixed)
+  }
+}
+
+"%like%" = function(vector, pattern) like(vector, pattern)
+# as grep -i -- grep, ignoring case
+"%ilike%" = function(vector, pattern) like(vector, pattern, ignore.case = TRUE)
+# as grep -F or fgrep -- grep against a fixed pattern (no regex)
+# (more efficient where applicable)
+"%flike%" = function(vector, pattern) like(vector, pattern, fixed = TRUE)
+
+# Debug settings
+debug <- FALSE
+if(debug==TRUE) {
+df <- nrcWordsTSdata
+filterDate <- "2023-11-06"
+filterNRC <- "all"
+filterNRC <- "joy"
+filterN <- 5
+} # End debug
+
+# Round date to week and filter
+filterWeek <- lubridate::round_date(as.Date(paste0(filterDate)), "1 week")
+df_all <- df %>% dplyr::filter(week %like% as.Date(filterWeek)) %>%
+# Remove sentiment equals zero
+dplyr::filter(!sentiment==0)
+# View(df_all)
+
+# All NRC sentiments
+if(stringr::str_to_title(filterNRC)=="All") {
+df_filter <- df_all %>%
+dplyr::group_by(word, desc, date, week) %>%
+dplyr::mutate(sentiment=as.numeric(sentiment)) %>%
+dplyr::summarize(n=sum(sentiment), .groups='keep') %>%
+dplyr::ungroup() %>%
+dplyr::arrange(desc(date), desc(n))
+# View(df_filter)
+# Filter by NRC sentiment
+} else if(!stringr::str_to_title(filterNRC)=="All") {
+df_filter <- df_all %>% 
+dplyr::filter(nrc %like% filterNRC) %>% 
+dplyr::group_by(nrc, word, desc, date, week) %>%
+dplyr::mutate(sentiment=as.numeric(sentiment)) %>%
+dplyr::summarize(n=sum(sentiment), .groups='keep') %>%
+dplyr::ungroup() %>%
+dplyr::arrange(desc(date), desc(n))
+# View(df_filter)
+} # End filterNRC
+
+df_select <- df_filter %>% 
+dplyr::select(word, n, date) %>%
+dplyr::mutate(n=as.numeric(n)) 
+# View(df_select)
+
+# Filter out low quantile sentiment
+# quantile_filter <- as.numeric(quantile(df_all$sentiment)[1])
+df_select <- df_select %>%
+dplyr::filter(n > as.numeric(quantile(df_all$sentiment)[1])) %>%
+dplyr::group_by(date) %>%
+dplyr::slice_max(order_by=n, n=filterN) %>%
+dplyr::mutate(word=tidytext::reorder_within(word, n, date)) %>%
+dplyr::ungroup()
+# View(df_select)
+
+chart <- df_select %>% 
+ggplot2::ggplot(aes(x=word, y=n, fill=n)) + 
+ggplot2::geom_bar(stat="identity", show.legend=FALSE) +
+ggplot2::facet_wrap(~date, scales="free", drop=TRUE) +
+upstartr::scale_x_reordered() + 
+ggplot2::scale_y_continuous(expand = c(0,0)) + 
+ggplot2::scale_fill_viridis_c() + 
+labs(title=paste0("Top ",filterNRC, " words per day for ", 
+appStoreID_2["name"], " for week of ", filterWeek), 
+y=element_blank(), x=element_blank()) +
+theme(axis.text.x=element_text(angle=25, vjust=1.0, hjust=1.0)) +
+theme_minimal() + coord_flip() 
+if(debug==TRUE) {print(chart)}
+
+# Return chart
+return(chart) 
+
+} # End function
+```
+</details>
+
+### Analyze words by sentiment per day/week 
+
+### All Sentiment {.tabset}
+
+#### Week 1: All
+```{r echo = TRUE, eval = TRUE, fig.width = 12, fig.height = 8, "TS Week 1 All"}
+
+min_date <- min(nrcWordsTSdata$date)
+
+# Get sentiment words by week
+get_sentiment_words_by_date(nrcWordsTSdata, min_date, "all", 15)
+```
+
+#### Week 2: All
+```{r echo = TRUE, eval = TRUE, fig.width = 12, fig.height = 8, "TS Week 2 All"}
+
+min_date <- (min_date+7)
+
+# Get sentiment words by week
+get_sentiment_words_by_date(nrcWordsTSdata, min_date, "all", 10)
+```
+
+### Corpus & Document Matrices
+
+A corpus is a type of object typically containing raw strings annotated with additional metadata and details. A text corpus is a large and structured collection of text documents that are used for linguistic analysis, language modeling, and various natural language processing (NLP) tasks. 
+
+A corpus serves as a representative sample of a language or a specific domain, and it acts as a valuable resource for studying language patterns, extracting information, and training language models. Here are key characteristics and components of a text corpus:
+
+```{r echo = TRUE, eval = TRUE, "Corpus"}
+# Create Corpus Data Frame
+corpusAll <- textClean %>% 
+  dplyr::filter(desc %in% c(appStoreID_1["name"])) %>%
+  dplyr::select(id, text)
+  
+# Create Corpus
+corpus <- tm::VCorpus(VectorSource(corpusAll$text))
+# https://www.rdocumentation.org/packages/tm/versions/0.7-11/topics/VCorpus
+```
+### Term Document Matrix
+
+A term-document matrix represents the relationship between terms and documents, where each row stands for a term and each column for a document, and an entry is the number of occurrences of the term in the document. The inverse of this structure is a document term matrix.
+
+```{r echo = TRUE, eval = TRUE, "Term Document Matrix"}
+
+# Create Term Document Matrix
+tdm <- tm::TermDocumentMatrix(corpus)
+# inspect(tdm)
+
+# Remove Sparse Terms
+tdmSparse <- tm::removeSparseTerms(tdm, 0.97)
+# inspect(tdmSparse)
+
+# Create TDM Data Frame
+tdmData <- as.data.frame(as.matrix(tdmSparse))
+# str(tdmData)
+
+```
+
+### Document Term Matrix
+
+A document term matrix is a sparse matrix describing a collection (i.e., a corpus) of documents with one row for each document and one column for each term. The value in the matrix is typically word count or tf-idf. The inverse of this structure is a term document matrix.
+
+```{r echo = TRUE, eval = TRUE, "Document Term Matrix"}
+# Create Document Term Matrix
+dtm <- tm::DocumentTermMatrix(corpus)
+# inspect(dtm)
+
+# Create Sparse DTM
+dtmSparse <- tm::removeSparseTerms(dtm, 0.999)
+# inspect(dtmSparse)
+
+# Create DTM Data Frame
+dtmData <- as.data.frame(as.matrix(dtmSparse))
+# str(dtmData)
+```
+
+## Dendrograms
+
+A dendrogram is a tree diagram or hierarchical structure that represents the arrangement of objects or clusters based on their similarities. It is commonly used in hierarchical clustering analysis, a technique in data analysis and statistics that groups similar items together in a nested, tree-like structure. Dendrograms provide a visual representation of the relationships and structures within a dataset, making it easier to interpret patterns and similarities.
+
+Dendrograms are powerful visual tools for understanding hierarchical structures and relationships within a dataset. It is particularly useful for revealing patterns in clustering analyses and aiding in the interpretation of similarity or dissimilarity between groups of data points.
+
+Read more at
+
+- https://cran.r-project.org/web/packages/ggdendro/vignettes/ggdendro.html
+
+### Dendrogram helper functions
+
+<details>
+<summary>Show Dendrogram Function Code</summary>
+```{r echo = TRUE, eval = TRUE, "Dendrogram function"}
+if("ggdendro" %in% rownames(installed.packages()) == FALSE) {
+install.packages("ggdendro", dependencies = TRUE)}
+suppressPackageStartupMessages(library(ggdendro))
+
+# Make ggplot dendrogram function
+plot_ggdendrogram <- function(tdm, 
+direction=c("lr", "rl", "tb", "bt"),
+fan=FALSE, scaleColor=NULL, branchSize=1, 
+labelSize=3, nudgeLabel=0.01, expandY=0.1) {
+  
+# Format dendrogram data
+mtc <- scale(tdm)
+D <- dist(mtc)
+hc <- hclust(D)
+hcdata <- ggdendro::dendro_data(hc, type="rectangle")
+seg <- hcdata$segments
+labclust <- cutree(hc,5)[hc$order]
+segclust <- rep(0L, nrow(seg))
+heights <- sort(hc$height, decreasing=TRUE)
+height <- mean(c(heights[5], heights[5-1L]), na.rm=TRUE)
+for (i in 1:5) {
+xi <- hcdata$labels$x[labclust==i]
+idx1 <- (seg$x >=min(xi) & seg$x <=max(xi))
+idx2 <- (seg$xend >=min(xi) & seg$xend <=max(xi))
+idx3 <- (seg$yend < height)
+idx <- (idx1 & idx2 & idx3)
+segclust[idx] <- i
+} # End loop
+idx <- which(segclust==0L)
+segclust[idx] <- segclust[idx + 1L]
+hcdata$segments$clust <- segclust
+hcdata$segments$line <- as.integer(segclust < 1L)
+hcdata$labels$clust <- labclust
+# head(hcdata)
+
+# Plot dendrogram function
+plot_ggdendro <- function(hcdata, 
+direction=c("lr", "rl", "tb", "bt"),
+fan=FALSE, scale.color=NULL, branch.size=1, 
+label.size=3, nudge.label=0.01, expand.y=0.1) {
+
+# if fan=FALSE
+direction <- match.arg(direction) 
+ybreaks <- pretty(segment(hcdata)$y, n=5)
+ymax <- max(segment(hcdata)$y)
+
+# Branches
+plot <- ggplot2::ggplot() + 
+geom_segment(data=segment(hcdata),
+aes(x=x, y=y, xend=xend, yend=yend, 
+linetype=factor(line), colour=factor(clust)), 
+lineend="round", show.legend=FALSE, linewidth=branch.size)
+
+# Orientation
+if(fan) {
+plot <- plot + coord_polar(direction=-1) +
+scale_x_continuous(breaks=NULL, limits=c(0, nrow(label(hcdata)))) +
+scale_y_reverse(breaks=ybreaks)
+} else if(!fan) {
+plot <- plot + scale_x_continuous(breaks=NULL)
+if(direction %in% c("rl", "lr")) {
+plot <- plot + coord_flip()
+} # End rl/lr
+if(direction %in% c("bt", "lr")) {
+plot <- plot + scale_y_reverse(breaks=ybreaks)
+} else if(!direction %in% c("bt", "lr")) {
+plot <- plot + scale_y_continuous(breaks=ybreaks) 
+nudge.label <- -(nudge.label)
+} # End bt/lr
+} # End fan check
+
+# Set labels function
+set_labels_params <- function(nbLabels, direction=c("tb", "bt", "lr", "rl"), fan=FALSE) {
+if(fan) {
+angle <- 360 / nbLabels * 1:nbLabels + 90
+idx <- angle >=90 & angle <=270
+angle[idx] <- angle[idx] + 180
+hjust <- rep(0, nbLabels)
+hjust[idx] <- 1
+} else if(!fan) {
+angle <- rep(0, nbLabels)
+hjust <- 0
+if(direction %in% c("tb", "bt")) {angle <- angle + 45}
+if(direction %in% c("tb", "rl")) {hjust <- 1}
+} # End fan
+list(angle=angle, hjust=hjust, vjust=0.5)
+} # End function
+
+# Labels
+labelParams <- set_labels_params(nrow(hcdata$labels), direction, fan)
+hcdata$labels$angle <- labelParams$angle
+plot <- plot + geom_text(data=label(hcdata), 
+aes(x=x, y=y, label=label, colour=factor(clust),
+angle=angle), vjust=labelParams$vjust, hjust=labelParams$hjust,
+nudge_y=ymax * nudge.label, size=label.size, show.legend=FALSE)
+
+# Colors & Limits
+if(!is.null(scale.color)) {
+plot <- plot + ggplot2::scale_color_manual(values=scale.color)
+} # End !is.null(scale.color)
+ylim <- -round(ymax * expand.y, 1)
+plot <- plot + expand_limits(y=ylim)
+return(plot)
+} # End function
+
+# Make plot
+dendro <- plot_ggdendro(
+  hcdata=hcdata, 
+  direction=direction, 
+  scale.color=scaleColor,
+  branch.size=branchSize,
+  label.size=labelSize,
+  expand.y=expandY, 
+  nudge.label=nudgeLabel
+  ) + 
+labs(y=element_blank(), x=element_blank())
+
+# Return plot
+return(dendro)
+
+} # End function
+```
+</details>
+
+### Plot dendrograms 
+
+```{r echo = TRUE, eval = TRUE, fig.width = 10, fig.height = 8, "Dendrogram Chart Run 1"}
+# Remove Sparse Terms
+## x - A DocumentTermMatrix or a TermDocumentMatrix.
+## sparse - A numeric for the maximal allowed sparsity in the range.
+# https://www.rdocumentation.org/packages/tm/versions/0.7-11/topics/removeSparseTerms
+tdmSparse <- tm::removeSparseTerms(x=tdm, sparse=0.975)
+# inspect(tdmSparse)
+
+# Plot Dendrogram
+# https://rdrr.io/github/schyen/OCMSExplorer/man/plot_ggdendro.html
+dendrogram <- plot_ggdendrogram(tdmSparse, 
+direction="lr", expandY=0.2, nudgeLabel=0.05) + 
+labs(title=paste0("Dendrogram for : ", appStoreID_1["name"])) 
+# dendrogramPlotly <- ggplotly(dendrogram) %>% hide_legend()
+# dendrogram
+```
+
+### Dendrograms {.tabset}
+
+#### Query 1
+
+```{r echo = FALSE, eval = TRUE, fig.width = 10, fig.height = 8, "Dendrogram Chart 1"}
+dendrogram
+```
+
+#### Query 2
+
+```{r echo = FALSE, eval = TRUE, fig.width = 10, fig.height = 8, "Dendrogram Chart Run 2"}
+# Create Corpus Data Frame
+corpusAll2 <- textClean %>% 
+  dplyr::filter(desc %in% c(appStoreID_2["name"])) %>%
+  dplyr::select(id, text)
+  
+# Create Corpus
+corpus2 <- tm::VCorpus(VectorSource(corpusAll2$text))
+
+# Create Term Document Matrix
+tdm2 <- tm::TermDocumentMatrix(corpus2)
+# inspect(tdm)
+
+# Remove Sparse Terms
+tdmSparse2 <- tm::removeSparseTerms(tdm2, 0.97)
+# inspect(tdmSparse)
+
+# Create TDM Data Frame
+tdmData2 <- as.data.frame(as.matrix(tdmSparse2))
+# str(tdmData)
+
+# Remove Sparse Terms
+## x - A DocumentTermMatrix or a TermDocumentMatrix.
+## sparse - A numeric for the maximal allowed sparsity in the range.
+# https://www.rdocumentation.org/packages/tm/versions/0.7-11/topics/removeSparseTerms
+tdmSparse2 <- tm::removeSparseTerms(x=tdm2, sparse=0.975)
+# inspect(tdmSparse)
+
+# Plot Dendrogram
+# https://rdrr.io/github/schyen/OCMSExplorer/man/plot_ggdendro.html
+dendrogram2 <- plot_ggdendrogram(tdmSparse2, 
+direction="lr", expandY=0.2, nudgeLabel=0.05) + 
+labs(title=paste0("Dendrogram for : ", appStoreID_2["name"])) 
+# dendrogramPlotly <- ggplotly(dendrogram) %>% hide_legend()
+```
+
+```{r echo = FALSE, eval = TRUE, fig.width = 10, fig.height = 8, "Dendrogram Chart 2"}
+dendrogram2
+```
+
+
+
+
+
