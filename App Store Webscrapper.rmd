@@ -1,0 +1,943 @@
+---
+title: "Apple App Store Reviews"
+author: "Rodney"
+date: "9/18/2022"
+output: html_document
+---
+
+# Background:
+
+Web scraping is the process of extracting data from websites by using automated tools or scripts. It involves fetching web pages, parsing the HTML or XML content, and extracting the relevant information. Web scraping is a valuable technique for collecting data from the internet when the data is not readily available in a structured format or through APIs.
+
+Web scraping Apple App Store reviews involves extracting user reviews and related information from the Apple App Store's web pages. This process can provide valuable insights into user opinions, sentiments, and feedback about specific apps. 
+
+It's important to note that web scraping should be conducted ethically and in compliance with the terms of service of the Apple App Store. Always check and comply with the terms and conditions of the platform being scraped.
+
+```{r echo = FALSE, eval=TRUE, "Knitr", purl=FALSE}
+
+# Set Directory
+directory <- paste0(as.character(fs::dir_ls(path="~/Dropbox/", 
+type="directory", glob="*AppStoreReviews", recurse=TRUE)),"/")
+# message(paste0("Directory found: ", directory))
+
+if("knitr" %in% rownames(installed.packages()) == FALSE) {
+install.packages("knitr", dependencies = TRUE)}
+library(knitr)
+
+if("kableExtra" %in% rownames(installed.packages()) == FALSE) {
+install.packages("kableExtra", dependencies = TRUE)}
+library(kableExtra)
+
+# Custom function to get structure as df
+get_structure_table <- function(df) {
+# df <- sentimentTS  
+df_str <- data.frame(
+Names=names(df), 
+Type=sapply(names(df), class))
+rownames(df_str) <- seq.int(nrow(df_str))
+df_str$Rows <- NA
+df_rows <- df %>% head(4)
+df_rows <- df_rows %>% 
+mutate(across(everything(), as.character))
+for(n in 1:nrow(df_str)) {
+# n <- 1  
+columnSearch <- df_str[n, "Names"]  
+columnValues <- as.character(df_rows[, paste0(columnSearch)])
+columnValues <- substr(columnValues, 1, 21)
+df_str[n, "Rows"] <- paste(as.character(columnValues), collapse=", ")
+} # End loop
+return(df_str)
+} # End function
+
+# knitr::kable(get_structure_table(sentimentTS))
+
+```
+
+## Working Directory
+
+### Get working directory
+```{r echo = TRUE, eval = FALSE, "Getwd"}
+getwd()
+```
+
+### Set working directory
+<details>
+<summary>Show Mac Code</summary>
+```{r echo = TRUE, eval = FALSE, "Setwd Mac"}
+# Mac
+setwd("~/Desktop")
+
+# If you have a custom folder for storing files
+setwd("~/Desktop/Folder_Name")
+
+```
+</details>
+
+<details>
+<summary>Show Windows Code</summary>
+```{r echo = TRUE, eval = FALSE, "Setwd Windows"}
+
+# Windows
+setwd("C:/Users/Default/Desktop")
+
+# If you have a custom folder for storing files
+setwd("C:/Users/Default/Desktop/Folder_Name")
+
+```
+</details>
+
+### Set options 
+
+Setting 'stringsAsFactors = FALSE' will reduce potential data type errors
+
+```{r echo = TRUE, eval = TRUE, "Options"}
+options(stringAsFactors = FALSE)
+```
+
+### Automatically load packages if not already installed
+<details>
+<summary>Show Install Packages Code</summary>
+```{r echo = TRUE, eval = TRUE, "Packages"}
+if("tidyverse" %in% rownames(installed.packages()) == FALSE) {
+install.packages("tidyverse", dependencies = TRUE)}
+suppressPackageStartupMessages(library(tidyverse))
+
+if("plotly" %in% rownames(installed.packages()) == FALSE) {
+install.packages("plotly", dependencies = TRUE)}
+suppressPackageStartupMessages(library(plotly))
+
+if("data.table" %in% rownames(installed.packages()) == FALSE) {
+install.packages("data.table", dependencies = TRUE)}
+suppressPackageStartupMessages(library(data.table))
+
+if("remotes" %in% rownames(installed.packages()) == FALSE) {
+install.packages("remotes", dependencies = TRUE)}
+suppressPackageStartupMessages(library(remotes))
+```
+</details>
+
+### Install iTunesR package from Github
+
+- https://github.com/amrrs/itunesr
+
+The goal of the {iTunesR} package is to help iOS App Developers access iTunes App Store Ratings and Reviews programmatically, since iTunes Connect doesn't provide this data straightforward. If you get an error installing the package normally then run the second option to install from Github directly. 
+
+```{r echo = TRUE, eval = TRUE, "iTunesR"}
+if("itunesr" %in% rownames(installed.packages()) == FALSE) {
+install.packages("itunesr", dependencies = TRUE)}
+suppressPackageStartupMessages(library(itunesr))
+
+# Install package from Github
+if(nzchar(system.file(package="itunesr"))==FALSE) {
+remotes::install_github('amrrs/itunesr')}
+suppressPackageStartupMessages(library(itunesr))
+```
+
+### Search Settings
+
+Navigate to https://www.apple.com/us/search/ to search for app IDs
+
+You can get the ID from the end of the URL as such after picking an app in the App Store
+
+- https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580
+
+```{r echo = TRUE, eval = TRUE, "App Lists"}
+# App Store ID 1
+appStoreID_1 <- list(id="324684580", name="Spotify")
+# class(appStoreID_1) # list
+
+# App Store ID 2
+appStoreID_2 <- list(id="284035177", name="Pandora")
+
+# Set Country
+country <- "us"
+```
+
+### Lets run a query
+
+The Apple URL through the {iTunesR} package allows us to grab up to 10 pages of reviews equating to about 500 rows per application. This is adequate to perform text and sentiment analysis on and can be run over time to get accumulated rows.
+
+```{r echo = TRUE, eval = TRUE, "Test reviews function"}
+testReviews <- itunesr::getReviews(appStoreID_1[[1]], country, 1)
+```
+
+### Examine the reviews
+```{r echo = TRUE, eval=FALSE, results='asis', "Reviews View"}
+View(testReviews)
+```
+```{r echo = FALSE, results='asis', purl=FALSE, "Reviews Kable"}
+knitr::kable(testReviews) %>%
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+This only gets us the first page of reviews. The function would need to be run 10 different times in order to get all of the available pages allowed updating the page number manually each time. However, a simple function with a repeat inside of it can help automate the process using the increment counter. 
+
+How to speed this up? See the helper function below
+
+```{r echo = TRUE, eval = TRUE, "Reviews Multiple"}
+# Get app id
+app1_id <- appStoreID_1[[1]]
+# app1_id
+
+# Get page 2
+testReviews2 <- itunesr::getReviews(app1_id, country, 2)
+
+# Get page 3
+testReviews3 <- itunesr::getReviews(app1_id, country, 3)
+```
+
+### What is a function?
+
+In R, a function is a block of organized, reusable code designed to perform a specific task. Functions in R are a fundamental concept in programming and play a crucial role in modularizing code, promoting code reuse, and improving code readability. R provides a variety of built-in functions, and users can also define their own custom functions.
+
+Custom functions allow R programmers to encapsulate logic, improve code organization, and make their code more modular. Additionally, functions are crucial for creating reproducible and efficient code in data analysis, statistics, and other areas of R programming.
+
+For the most basic version of a function see below
+
+```{r echo = TRUE, eval = TRUE, "Test Function"}
+# Sample function
+my_function <- function(x) {return((x + 1)*7)}
+# print(my_function(6)) # [1] 49
+```
+
+### Build a function to help run multiple queries
+
+<details>
+<summary>Show Reviews Function Code</summary>
+```{r echo = TRUE, eval = TRUE, "Reviews Function"}
+# Build function
+allAppStoreReviews <- function(list, msg=FALSE) {
+  
+# Set blank data frame
+df <- NULL
+
+# Set global counter
+counter <<- 0
+
+# Repeat
+repeat{
+
+# Update global counter
+counter <<- (counter+1)  
+counter
+
+# Debug
+# list <- appStoreID_1
+
+# Add error catching
+if(is.list(list)) {
+
+# Extracting iOS App Reviews
+appStoreData <- suppressWarnings(
+  try(itunesr::getReviews(list[[1]], country, counter), silent=T))
+
+# Else if not list
+} else if(!is.list(list)) {
+	
+# Write message
+message("Error, please input a list")
+
+} # End list check
+
+if(is.character(appStoreData) && 
+stringr::str_detect(appStoreData, "cannot open the connection")) {
+if(msg==TRUE){message("Breaking on URL error")}
+  
+# Break repeater function
+break
+  
+} # End repeat catch
+
+# Debug
+# print(head(appStoreData[,c(1:5)]))
+
+# Add app name to row
+appStoreData <- appStoreData %>% 
+dplyr::mutate(Datetime=Date) %>%
+dplyr::mutate(Date=as.Date(Date)) %>%
+dplyr::mutate(App=paste0(list[[1]])) %>%
+dplyr::mutate(Desc=paste0(list[[2]])) 
+
+# Row bind to main data frame
+df <- rbind(df, appStoreData)
+
+# Write message
+if(msg==TRUE){message(paste0("Total reviews: ", nrow(df)))}
+
+} # End repeat
+
+# Return
+return(df)
+
+} # End function
+```
+</details>
+
+### Extract reviews for ID #1
+```{r echo = TRUE, eval = TRUE, "Extract Reviews 1"}
+# Get reviews for app #1
+appReviews1 <- allAppStoreReviews(appStoreID_1, msg=FALSE)
+# nrow(appReviews1) # [1] 490
+```
+
+### Examine the reviews
+```{r echo = TRUE, eval=FALSE, results='asis', "Reviews 1 View"}
+View(appReviews1)
+```
+```{r echo = FALSE, results='asis', purl=FALSE, "Reviews 1 Kable"}
+knitr::kable(appReviews1) %>%
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+### Get reviews for app #2
+```{r echo = TRUE, eval = TRUE, "Extract Reviews 2"}
+appReviews2 <- allAppStoreReviews(appStoreID_2, msg=FALSE)
+# nrow(appReviews2) # [1] 490
+```
+
+### Examine the reviews
+```{r echo = TRUE, eval=FALSE, results='asis', "Reviews 2 View"}
+View(appReviews2)
+```
+```{r echo = FALSE, eval=FALSE, results='asis', purl=FALSE, "Reviews 2 Kable"}
+knitr::kable(appReviews2) %>%
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+```{r echo = FALSE, eval=FALSE, results='asis', purl=FALSE, "Reviews 2 DT"}
+DT::datatable(appReviews2, options=list(search=list(regex=TRUE, search = '\\bi')))
+```
+
+### Subset data, format and examine structure
+
+Removing duplicate reviews will lead to a higher quality analysis. Collecting multiple scrapes of App reviews will lead to duplicate results over time so make sure to use the distinct() function within {dplyr} to quickly filter these out.
+
+```{r echo = TRUE, eval = TRUE, "Reviews Distinct"}
+# Row bind together
+allAppReviews <- rbind(appReviews1, appReviews2)
+
+# Validate your row bind
+# Add double equal sign == instead of single =
+nrow(appReviews1)+nrow(appReviews2)==nrow(allAppReviews)
+
+# Get distinct reviews
+# .keep_all=TRUE - keeps all other columns
+# .keep_all=FALSE - drops all other columns
+distinctAppReviews <- allAppReviews %>%
+  dplyr::distinct(Title, Author_Name, .keep_all=TRUE) 
+message(paste0("Distinct reviews: ", nrow(distinctAppReviews)))
+```
+
+### Check for duplicates
+```{r echo = TRUE, eval = TRUE, "Reviews Dupes"}
+if("janitor" %in% rownames(installed.packages()) == FALSE) {
+install.packages("janitor", dependencies = TRUE)}
+suppressPackageStartupMessages(library(janitor))
+
+reviewDupes <- janitor::get_dupes(distinctAppReviews, c("Title", "Author_Name", "Date"))
+# nrow(reviewDupes)
+```
+
+### Examine the reviews
+```{r echo = TRUE, eval=FALSE, results='asis', "Reviews Distinct View"}
+View(distinctAppReviews)
+```
+```{r echo = FALSE, results='asis', purl=FALSE, "Reviews Distinct Kable"}
+knitr::kable(distinctAppReviews) %>%
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+#### Now lets format the columns from our reviews properly
+```{r echo = TRUE, eval = TRUE, "Format Columns"}
+# Print colnames
+colnames(distinctAppReviews)
+
+# Set new column names
+colnames(distinctAppReviews) <- c("title", "author_url", "author", "version", "rating", 
+                               "text", "date",  "datetime", "app", "desc")
+# Print colnames
+colnames(distinctAppReviews)
+```
+
+### Get current time zone
+```{r echo = TRUE, eval = TRUE, "Get Timezone"}
+# is.POSIXct(distinctAppReviews$datetime)
+# Get timezone of the data
+attr(distinctAppReviews$datetime, "tzone")
+```
+
+### Convert to new time zone
+```{r echo = TRUE, eval = TRUE, "Format Timezone"}
+# Make new data frame
+saveAppReviews <- distinctAppReviews
+
+# Set column as Date/Time
+saveAppReviews$datetime  <- as.POSIXct(
+  saveAppReviews$datetime, format="%Y-%m-%d %H:%M:%S", tz="UTC")
+
+# Convert to different time zone 
+## Also use tz="America/New York"
+saveAppReviews$datetime  <- as.POSIXct(saveAppReviews$datetime, tz="America/Detroit")
+
+# Round time to nearest minute
+saveAppReviews$datetime <- lubridate::round_date(saveAppReviews$datetime, "1 min")
+
+# Format date
+saveAppReviews$date <- as.Date(saveAppReviews$date)
+# class(saveAppReviews$date) # [1] "Date"
+```
+
+### Get current time zone
+```{r echo = TRUE, eval = TRUE, "Get Timezone 2"}
+# Get timezone of the data
+attr(saveAppReviews$datetime, "tzone")
+```
+
+### Write data to CSV file on your local computer
+```{r echo = TRUE, eval = TRUE, "Write CSV"}
+# Set directory if different from working directory
+filesDirectory <- "C:/Users/Default/Desktop/App-Reviews"
+filesDirectory <- "~/Desktop/App-Reviews"
+# filesDirectory <- getwd()
+
+if(!dir.exists(filesDirectory)) {
+  dir.create(filesDirectory)
+}
+
+# Make file name based on current time
+fileName <- paste0(filesDirectory, "/App-Store-Reviews-",
+                   format(Sys.time(),'%Y-%m-%d-%H-%M-%P'),".csv")
+
+# Write CSV file
+write.csv(saveAppReviews, fileName, row.names=FALSE)
+```
+
+### Write data to excel file
+
+If you need an Excel file instead of a CSV file then you can also write to this format as well.
+
+- http://www.sthda.com/english/wiki/reading-data-from-excel-files-xls-xlsx-into-r
+
+```{r echo = TRUE, eval = FALSE, "Write Excel"}
+if("xlsx" %in% rownames(installed.packages()) == FALSE) {
+install.packages("xlsx", dependencies = TRUE)}
+suppressPackageStartupMessages(library(xlsx))
+
+# Write file
+write.xlsx(saveAppReviews, 
+           "App-Store-Reviews.xlsx", 
+           sheetName = "Sheet1", 
+           col.names = TRUE, 
+           row.names = TRUE, 
+           append = FALSE)
+
+# Read file back
+test_xlsx <- read.xlsx("App-Store-Reviews.xlsx", 
+                       "Sheet1", header=TRUE)
+
+# Remember to format the date or else the data may get messed up for analysis.
+test_xlsx$date <- as.Date(test_xlsx$date)
+test_xlsx$datetime <- strptime(test_xlsx$datetime, format="%Y-%m-%d %H:%M:%S")
+# Also use tz="America/New York"
+test_xlsx$datetime  <- as.POSIXct(test_xlsx$datetime, tz="America/Detroit")
+```
+
+### Merge multiple files together in the same folder
+
+Make sure all of the files in this folder are formatted with the same number of columns and only contains CSV files of reviews you wish to merge. Once you save the distinct reviews file you can either delete these or save them as a backup.
+
+```{r echo = FALSE, eval = TRUE, "Merge Files Fix"}
+fix_old_markdown_errors <- function(data) {
+if("testLogical" %in% colnames(data)) {
+data <- data %>% dplyr::select(-testLogical) 
+write.csv(data, loadFile, row.names=FALSE)}
+if("id" %in% colnames(data)) {
+data <- data %>% dplyr::select(-id) 
+write.csv(data, loadFile, row.names=FALSE)}
+if(!"version" %in% colnames(data)) {
+data$version <- "Not Available"
+write.csv(data, loadFile, row.names=FALSE)}
+if(!"author_url" %in% colnames(data)) {
+data$author_url <- "Not Available"
+write.csv(data, loadFile, row.names=FALSE)}
+if(!"author" %in% colnames(data)) {
+data$author <- "Not Available"
+write.csv(data, loadFile, row.names=FALSE)}
+if(!"app" %in% colnames(data)) {
+data$app <- ""
+write.csv(data, loadFile, row.names=FALSE)}
+return(data)
+} # End function
+# data <- fix_old_markdown_errors(data)
+```
+
+```{r echo = TRUE, eval = TRUE, "Merge Files"}
+# Set directory if different from working directory
+filesDirectory <- "C:/Users/Default/Desktop/App-Reviews"
+filesDirectory <- "~/Desktop/App-Reviews"
+# filesDirectory <- getwd()
+
+# Check if directory exists
+if(dir.exists(paste0(filesDirectory))) {
+# List all files in directory  
+files <- list.files(paste0(filesDirectory))
+} # End dir.exists
+
+# Make dummy data frame
+allData <- NULL
+
+# Run loop
+for(n in 1:length(files)) {
+# Check if CSV extension
+if(tools::file_ext(paste0(filesDirectory, "/", files[n]))=="csv") {
+# Read CSV
+loadFile <- paste0(filesDirectory, "/", files[n])
+# message(paste0("Loading file: ", loadFile))
+data <- read.csv(loadFile, row.names=NULL)
+# Row bind file to empty data frame
+allData <- rbind(allData, data)
+} # End extension check
+} # End loop
+
+# Get the distinct rows at the end to avoid duplicates
+allDataDistinct <- allData %>% 
+  dplyr::filter(desc %in% c(paste0(appStoreID_1["name"]), paste0(appStoreID_2["name"]))) %>%
+  dplyr::distinct(title, datetime, desc, rating, .keep_all=TRUE)
+
+# Compare the two
+# nrow(allData)
+# nrow(allDataDistinct)
+```
+
+### Write distinct data to new CSV file
+```{r echo = TRUE, eval = FALSE, "Distinct New CSV 1"}
+fileName <- paste0("App-Store-Reviews-",
+appStoreID_1["name"],"-",appStoreID_2["name"],".csv")
+write.csv(allDataDistinct, fileName, row.names=FALSE)
+```
+```{r echo = FALSE, eval = TRUE, "Distinct New CSV 2"}
+fileName <- paste0(directory, "App-Store-Reviews-",
+appStoreID_1["name"],"-",appStoreID_2["name"],".csv")
+write.csv(allDataDistinct, fileName, row.names=FALSE)
+```
+
+### Reload Dataset
+```{r echo = TRUE, eval = FALSE, "Read CSV"}
+# 1. Read CSV by choosing file from local machine
+appStoreReviews <- read.csv(file.choose(), row.names=NULL)
+
+# 2. Read CSV from previous file name
+# Check if file exists or not
+if(file.exists(paste0(fileName))) {
+appStoreReviews <- read.csv(paste0(fileName), row.names=NULL)
+} # End file.exists
+
+# 3. Read CSV file from manual input
+appStoreReviews <- read.csv("App-Store-Reviews.csv", row.names=NULL)
+```
+```{r echo = FALSE, eval = TRUE, "Read CSV file"}
+appStoreReviews <- read.csv(paste0(fileName), row.names=NULL)
+```
+
+### Examine structure of imported file data
+```{r echo = TRUE, eval = FALSE, "CSV Structure"}
+str(appStoreReviews) 
+```
+```{r echo = FALSE, eval = TRUE, purl=FALSE, "CSV Kable"}
+knitr::kable(get_structure_table(appStoreReviews)) %>%
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+See how all the columns get reverted back to characters and integers? Make sure to reformat columns when using read.csv()
+Format factor and time columns
+
+Since we last left in New York EST we need to put it back in that
+
+### Format columns
+
+Why do we need to format columns? This is one of the most important aspects of doing any kind of analysis in R. Without proper formatting of column variables the results can be widely innaccurate. 
+
+```{r echo = TRUE, eval = FALSE, "Why Format Columns?"}
+5+7
+tryMe1 <- try(as.character("5")+as.character("7"), silent=TRUE)
+print(class(tryMe1)=="try-error")
+print(tryMe1)
+
+as.numeric(as.character("5"))+as.numeric(as.character("7"))
+tryMe2 <- try(as.character("2023-01-01")-as.character("2022-01-01"),silent=TRUE)
+print(class(tryMe2)=="try-error")
+print(tryMe2)
+
+# Set as date properly
+as.Date(as.character("2023-01-01"))-as.Date(as.character("2022-01-01"))
+```
+
+### Renaming columns individually using {dplyr}
+```{r echo = TRUE, eval = TRUE, "Rename columns"}
+# Rename a column
+if("author_url" %in% colnames(appStoreReviews)) {
+  appStoreReviews <- appStoreReviews %>%
+    # New name = old name
+    dplyr::rename(url=author_url) %>%
+    # Rename it back to old name
+     dplyr::rename(author_url=url)
+# Use ! to negate the statement
+} else if(!"author_url" %in% colnames(appStoreReviews)) {
+  print("No column exists")
+} # End column %in% 
+
+# Get column names
+colnames(appStoreReviews)
+
+# Select specific column order
+appStoreReviews <- appStoreReviews %>%
+dplyr::select(title, author, author_url, 
+              version, rating, text, date, 
+              datetime, desc)
+```
+
+### Add incrementing id column
+```{r echo = TRUE, eval = TRUE, "Reviews Id Column"}
+appStoreReviews$id <- as.numeric(seq.int(nrow(appStoreReviews)))
+# is.numeric(appStoreReviews$id) ## [1] TRUE
+```
+
+### Format character column
+```{r echo = TRUE, eval = TRUE, "Test Character"}
+appStoreReviews$title <- as.character(appStoreReviews$title)
+# is.character(appStoreReviews$title) ## [1] TRUE
+```
+
+### Format date column
+```{r echo = TRUE, eval = TRUE, "Test Date"}
+appStoreReviews$date <- as.Date(appStoreReviews$date)
+# is.Date(appStoreReviews$date) ## [1] TRUE
+```
+
+### Format time column
+```{r echo = TRUE, eval = TRUE, "Time Column Formating"}
+# Set column as Date/Time
+appStoreReviews$datetime  <- as.POSIXct(
+  appStoreReviews$datetime, format="%Y-%m-%d %H:%M:%S", tz="America/Detroit")
+# is.POSIXct(appStoreReviews$datetime) ## [1] TRUE
+
+# Round time
+appStoreReviews$datetime <- lubridate::round_date(appStoreReviews$datetime, "1 min")
+```
+
+### Get current time zone of data
+```{r echo = TRUE, eval = TRUE, "Get Timezone 3"}
+# Get timezone of the data
+attr(appStoreReviews$datetime, "tzone")
+```
+
+### Date and time formatting
+
+```{r echo = FALSE, eval = TRUE, "Time Formats Data", purl=FALSE}
+timeFormats <- list()
+timeFormats <- append(timeFormats, list(c("Year (4 Digits)", "%Y")))
+timeFormats <- append(timeFormats, list(c("Year (2 Digits)", "%y")))
+timeFormats <- append(timeFormats, list(c("Month (Full)", "%B")))
+timeFormats <- append(timeFormats, list(c("Month (Abbreviated)", "%b OR %h")))
+timeFormats <- append(timeFormats, list(c("Month (Decimal)", "%m")))
+timeFormats <- append(timeFormats, list(c("Week of Year (Start=Sunday)", "%U")))
+timeFormats <- append(timeFormats, list(c("Week of Year (Start=Monday)", "%W")))
+timeFormats <- append(timeFormats, list(c("Day of Year (Decimal)", "%j")))
+timeFormats <- append(timeFormats, list(c("Day of Month (Decimal)", "%d")))
+timeFormats <- append(timeFormats, list(c("Weekday (Full)", "%A")))
+timeFormats <- append(timeFormats, list(c("Weekday (Abbreviated)", "%a")))
+timeFormats <- append(timeFormats, list(c("Weekday (0=Sunday)", "%w")))
+timeFormats <- append(timeFormats, list(c("Hours (24 Hrs)", "%H")))
+timeFormats <- append(timeFormats, list(c("Hours (12 Hrs)", "%I")))
+timeFormats <- append(timeFormats, list(c("Minutes", "%M")))
+timeFormats <- append(timeFormats, list(c("Second", "%S")))
+timeFormats <- append(timeFormats, list(c("Locale-Specific Date & Time", "%c")))
+timeFormats <- append(timeFormats, list(c("Locale-Specific Date", "%x")))
+timeFormats <- append(timeFormats, list(c("Locale-Specific Time", "%X")))
+timeFormats <- append(timeFormats, list(c("Locale-Specific AM/PM", "%p")))
+timeFormats <- append(timeFormats, list(c("Offset from GMT", "%z")))
+timeFormats <- append(timeFormats, list(c("Time Zone", "%Z")))
+timeFormats <- do.call(rbind.data.frame, timeFormats)
+colnames(timeFormats) <- c("Description", "Code")
+
+knitr::kable(timeFormats) %>% 
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+### Formatting dates and times
+
+<details>
+<summary>Show Date/Time Formats Code</summary>
+```{r echo = TRUE, eval = FALSE, "Test Time"}
+# Years Example (%Y-%y)
+format(Sys.time(), "%Y-%y")
+# "2023-23"
+
+# Months Example (%B-%b-%h-%m)
+format(Sys.time(), "%B-%b-%h-%m")
+# "November-Nov-Nov-11"
+
+# Weeks Example (%U-%W)
+format(Sys.time(), "%U-%W")
+# "47-46"
+
+# Days Example (%j-%d)
+format(Sys.time(), "%j-%d")
+# "323-19"
+
+# Weekdays Example (%A-%a-%w)
+format(Sys.time(), "%A-%a-%w")
+# "Sunday-Sun-0"
+
+# Time Example (%H-%I-%M-%S)
+format(Sys.time(), "%H-%I-%M-%S")
+# "10-10-38-19"
+
+# Get Current Date/Time
+format(Sys.Date(), format="%Y-%m-%d")
+#  "2023-11-19"
+format(Sys.Date(), format="%d/%m/%Y")
+#  "2023-11-19"
+
+# Convert from one format to another
+# Formats %d/%m/%Y to %Y-%m-%d
+format(format((Sys.Date()), format="%Y-%m-%d"), format="%d/%m/%Y")
+
+# Get system time zone
+Sys.timezone()
+
+# Set Time Zone
+# America/Detroit is the same time zone as 'America/New York'
+Sys.setenv(TZ = "America/New_York")
+Sys.setenv(TZ = "America/Detroit")
+Sys.timezone()
+```
+</details>
+
+### Format integer column
+```{r echo = TRUE, eval = TRUE, "Test Integer"}
+appStoreReviews$rating <- as.integer(appStoreReviews$rating)
+# is.integer(appStoreReviews$rating) ## [1] TRUE
+```
+
+### Format factor column
+```{r echo = TRUE, eval = TRUE, "Test Factor"}
+appStoreReviews$desc <- as.factor(appStoreReviews$desc)
+# is.factor(appStoreReviews$desc) ## [1] TRUE
+```
+
+### Examine factor levels
+```{r echo = TRUE, eval = TRUE, "Test Factor Levels"}
+levels(appStoreReviews$desc)
+```
+
+### Examine structure
+```{r echo = TRUE, eval = FALSE, "Examine Column Structure"}
+str(appStoreReviews) 
+```
+```{r echo = FALSE, eval = TRUE, purl=FALSE}
+knitr::kable(get_structure_table(appStoreReviews)) %>%
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+### Get rating summary statistics
+```{r echo = TRUE, eval = TRUE, "Data Summary"}
+summary(appStoreReviews)
+```
+
+### Get quantiles
+```{r echo = TRUE, eval = TRUE, "Data Quantiles"}
+quantile(appStoreReviews$rating)
+
+# Subset first quantile
+# quantile(appStoreReviews$rating)[1]
+```
+
+### Get mean
+```{r echo = TRUE, eval = TRUE, "Data Mean"}
+# Round to zero decimal points to replicate actual rating data
+# Change this if ratings are indicated with decimals
+ratingMean <- round(mean(as.numeric(appStoreReviews$rating), na.rm=TRUE),0)
+message(paste0("Average Rating: ", ratingMean))
+```
+
+### Get median
+```{r echo = TRUE, eval = TRUE, "Data Median"}
+ratingMedian <- median(as.numeric(appStoreReviews$rating), na.rm=TRUE)
+message(paste0("Median Rating: ", ratingMedian))
+```
+
+### Get mode
+```{r echo = TRUE, eval = TRUE, "Data Mode"}
+# Function to get mode
+get_mode <- function(v) {
+uniqv <- unique(as.numeric(v))
+uniqv[which.max(tabulate(match(v, uniqv)))]
+return(uniqv)
+} # End function
+
+# Get mode
+ratingMode <- get_mode(appStoreReviews$rating)
+message(paste0("Rating Mode: ", ratingMode[1]))
+```
+
+### Examine distribution
+```{r echo = TRUE, eval = TRUE, "Data Histogram"}
+# Histogram with density plot
+histogram <- appStoreReviews %>%
+  ggplot(aes(x=rating, color=desc, fill=desc)) +
+  geom_histogram(aes(y=after_stat(density)), position="dodge", bins = 9)+
+  geom_density(alpha=.2, fill="#FF6666") +
+  theme(legend.position="bottom")
+print(histogram)
+```
+
+### Save Plot
+```{r echo = TRUE, eval=FALSE, "Save Plot"}
+ggsave("statistics-histogram.jpg", histogram)
+```
+
+## Independent T-Test
+
+The independent samples t-test is used to compare two sample means from unrelated groups. This means that there are different people providing scores for each group. The purpose of this test is to determine if the samples are different from each other.
+
+Basic Hypotheses
+
+Null: The sample mean from Group 1 is not different from the sample mean from Group 2.
+
+Alternative: The sample mean from Group 1 is significantly different from the sample mean from Group 2.
+
+When reporting the p-value, there are two ways to approach it. 
+
+1. One is when the results are not significant. In that case, you want to report the p-value exactly: p = .24. 
+
+2. The other is when the results are significant. In this case, you can report the p-value as being less than the level of significance: p < .05.
+
+```{r echo = TRUE, eval=TRUE, "Data T-Test"}
+dataset1 <- appStoreReviews %>%
+dplyr::filter(desc==paste0(appStoreID_1[["name"]]))
+
+dataset2 <- appStoreReviews %>%
+dplyr::filter(desc==paste0(appStoreID_2[["name"]]))
+
+# Perform t-test
+t.test(dataset1$rating, dataset2$rating)
+```
+
+## Summarize data by date to create time series
+```{r echo = TRUE, eval=TRUE, "Summarize Data"}
+# Round date time and summarize data
+dataSummaryTS <- appStoreReviews
+dataSummaryTS$datetime <- lubridate::round_date(dataSummaryTS$datetime, "1 day")
+dataSummaryTS <- dataSummaryTS %>%
+dplyr::filter(!is.na(datetime)) %>%
+dplyr::group_by(datetime, desc) %>%
+dplyr::summarize(
+rating=round(mean(rating, na.rm=TRUE),2),
+count=n(), .groups='keep') %>%
+dplyr::ungroup() %>% 
+dplyr::arrange(desc(datetime))
+```
+
+### Examine the review summary
+```{r echo = TRUE, eval=FALSE, results='asis', "Summarize Data View"}
+View(dataSummaryTS)
+```
+```{r echo = FALSE, results='asis', purl=FALSE, "Summarize Kable"}
+knitr::kable(dataSummaryTS) %>%
+  kableExtra::kable_styling("striped", full_width = T) %>% 
+  kableExtra::scroll_box(height = "222px")
+```
+
+### Filter time series data
+
+Filter time series data for each app to get the average reviews per day as well as minimum date
+
+```{r echo = TRUE, eval=TRUE, "Summarize Data App 1"}
+app1series <- dataSummaryTS %>%
+dplyr::filter(desc==paste0(appStoreID_1[["name"]]))
+# nrow(app1series)
+
+### Get # of avg reviews per day
+app1avgReviews <- round(mean(app1series$count),2)
+message(paste0("Avg reviews per day for ", 
+appStoreID_1[["name"]], ": ", app1avgReviews))
+
+# Get minimum date for app 1
+minDate1 <- dataSummaryTS %>% 
+  dplyr::filter(desc==appStoreID_1[["name"]])
+minDate1 <- min(as.Date(minDate1$datetime))
+# minDate1 # "2023-11-04"
+
+```
+```{r echo = TRUE, eval=TRUE, "Summarize Data App 2"}
+app2series <- dataSummaryTS %>%
+dplyr::filter(desc==paste0(appStoreID_2[["name"]]))
+# nrow(app2series)
+
+### Get # of avg reviews per day
+app2avgReviews <- round(mean(app2series$count),2)
+message(paste0("Avg reviews per day for ", 
+appStoreID_2[["name"]], ": ", app2avgReviews))
+
+# Get minimum date for app 2
+minDate2 <- dataSummaryTS %>% 
+dplyr::filter(desc==appStoreID_2[["name"]])
+minDate2 <- min(as.Date(minDate2$datetime))
+# minDate2 # "2023-10-11"
+```
+
+### Chart the rating over time for both apps
+
+You can customize all of the settings for axis labels, titles and other chart aspects.
+
+<details>
+<summary>Show Date/Time Formats Code</summary>
+```{r echo = TRUE, eval=TRUE, fig.width = 10, "App 1 Rating Chart"}
+# The minimum date of app 1 is much more recent than app 2.
+# Filter the dataset so the time series match
+dataChartTS <- dataSummaryTS %>% 
+  dplyr::filter(datetime >= as.Date(minDate1))
+
+# Make time series chart
+ratingTSChart <- dataChartTS %>% 
+  ggplot2::ggplot(
+    ggplot2::aes(
+      x = datetime, 
+      y = rating, 
+      color = desc, 
+      fill = desc
+      )) + 
+  ggplot2::geom_area(
+    alpha=0.6, 
+    linewidth = 0.7, 
+    position = position_dodge(1)) +
+  ggplot2::scale_y_continuous(limits = c(0, 5)) +
+  ggplot2::scale_color_manual(values = c("#00AFBB", "#E7B800")) +
+  ggplot2::scale_fill_manual(values = c("#00AFBB", "#E7B800")) +
+  ggplot2::theme_minimal() + 
+  ggplot2::theme(legend.position='bottom') +
+  ggplot2::labs(title=paste0(
+    "Average Rating over Time for ", 
+    appStoreID_1[["name"]], 
+    " and ", appStoreID_2[["name"]]), 
+    y="Rating", x="Date", 
+    color="App", fill="App")
+# ratingTSChart
+# plotly::ggplotly(ratingTSChart)
+```
+</details>
+
+```{r echo = FALSE, eval=TRUE, fig.width = 10, "App 1 Rating Chart Plot"}
+plotly::ggplotly(ratingTSChart)
+```
+
+### Next - text & sentiment analysis of reviews
+
